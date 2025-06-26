@@ -1,101 +1,100 @@
 #!/usr/bin/env python3
 """
-xkcd.py — fetch a random XKCD comic and show it on an Inky e‑paper display
-(or save a PNG preview when no board is present).
-
-This version follows the unified squirt helper conventions so that all
-related scripts share the same structure, logging style, and folder layout.
+xkcd.py — fetch a random XKCD comic and display it on an Inky panel
+(13.3″ Spectra‑6, other Impressions, pHAT, wHAT …) or save a PNG preview
+when no hardware is present.
 
 Folders
 -------
-static/                 (created beside this file)
-└── xkcd/               ← comics cached here
-    └── …               ← preview PNGs also land here when headless
+static/
+└── xkcd/                ← comics and optional previews
 
-Exit codes: 0 = success, 1 = hard failure (network/image/inky error).
+Exit codes: 0 = OK, 1 = error.
 """
 
 from __future__ import annotations
 import os, sys, subprocess, requests
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
-from importlib import import_module
-from PIL import Image, UnidentifiedImageError
 from bs4 import BeautifulSoup
+from PIL import Image, UnidentifiedImageError
 
-# ────────────────────────────── Configuration ───────────────────────────────
-REMOTE_URL      = "https://c.xkcd.com/random/comic/"
-ROOT_DIR        = Path(__file__).with_name("static")
-SAVE_DIR        = ROOT_DIR / "xkcd"          # unique sub‑folder
-TIMEOUT         = 10
-RETRIES         = 2
-INKY_TYPE       = "spectra13"                # override only if auto fails
-INKY_COLOUR     = None                       # for PHAT/WHAT
-HEADLESS_RES    = (1600, 1200)               # same as Spectra‑13 panel
-# ─────────────────────────────────────────────────────────────────────────────
+# ───────────────────────── Configuration ──────────────────────────
+REMOTE_URL   = "https://c.xkcd.com/random/comic/"
+ROOT_DIR     = Path(__file__).with_name("static")
+SAVE_DIR     = ROOT_DIR / "xkcd"
+TIMEOUT      = 10
+RETRIES      = 2
+# Manual override when auto‑detect fails and EEPROM is blank:
+INKY_TYPE    = "el133uf1"          # "el133uf1" | "phat" | "what" | ""
+INKY_COLOUR  = None                # for pHAT / wHAT
+HEADLESS_RES = (1600, 1200)        # matches 13.3″ panel
+# ──────────────────────────────────────────────────────────────────
 
-# Ensure folder tree exists early
 SAVE_DIR.mkdir(parents=True, exist_ok=True)
 
-# ───────────────────────────── Helper → pip install ─────────────────────────
+# — pip helper —
 def _pip_install(*pkgs: str) -> None:
     subprocess.run(
         [sys.executable, "-m", "pip", "install", "--quiet", "--user",
          "--break-system-packages", *pkgs],
-        check=False,  # don’t abort script if pip itself errors
+        check=False,
     )
 
-# ───────────────────────────── Helper → Inky detect ─────────────────────────
+# — Inky initialisation —
 def init_inky():
     """
-    Return (dev_or_None, WIDTH, HEIGHT).
-    Falls back to a configurable dummy resolution when no board.
+    Returns (dev_or_None, WIDTH, HEIGHT).
+    Uses inky.auto when possible, else falls back to a manual class map.
     """
     try:
-        import inky, numpy  # noqa: F401
+        import inky, numpy  # noqa
     except ModuleNotFoundError:
-        print("Installing inky & numpy…")
+        print("Installing inky & numpy …")
         _pip_install("inky>=2.1.0", "numpy")
         try:
             import inky  # noqa
         except ModuleNotFoundError:
             pass
 
-    try:                               # 1) EEPROM auto‑detect
+    # 1) EEPROM‑driven auto‑detect (works on modern HATs)
+    try:
         from inky.auto import auto
         dev = auto()
         return dev, *dev.resolution
     except Exception:
         pass
 
-    # 2) manual overrides
+    # 2) Manual class map for older / EEPROM‑less boards
+    class_map = {
+        "el133uf1":  "InkyEL133UF1",   # 13.3″ Spectra‑6 Impression
+        "spectra13":"InkyEL133UF1",    # synonym for legacy scripts
+        "impression13":"InkyEL133UF1",
+        "phat":      "InkyPHAT",
+        "what":      "InkyWHAT",
+    }
+    key = INKY_TYPE.lower()
+    if key not in class_map:
+        print("No Inky board detected and INKY_TYPE is unset — headless mode.")
+        return None, *HEADLESS_RES
+
     try:
-        if INKY_TYPE == "spectra13":
-            try:
-                from inky.spectra13 import InkySpectra13    # ≥2.1
-            except ModuleNotFoundError:
-                from inky.spectra import InkySpectra13      # <2.1
-            dev = InkySpectra13()
-        elif INKY_TYPE == "phat":
-            from inky.phat import InkyPHAT; dev = InkyPHAT(INKY_COLOUR or "red")
-        elif INKY_TYPE == "what":
-            from inky.what import InkyWHAT; dev = InkyWHAT(INKY_COLOUR or "red")
-        else:
-            raise ValueError("Unknown INKY_TYPE")
+        board_cls = getattr(__import__("inky", fromlist=[class_map[key]]),
+                            class_map[key])
+        dev = board_cls(INKY_COLOUR) if key in ("phat", "what") else board_cls()
         return dev, *dev.resolution
     except Exception as e:
-        print("Inky unavailable → headless mode:", e, file=sys.stderr)
+        print("Inky unavailable → headless mode:", e, file=sys.stderr)
         return None, *HEADLESS_RES
 
 INKY, WIDTH, HEIGHT = init_inky()
 
-# ────────────────── Helper → robust HTTP session / download ─────────────────
+# — HTTP helpers —
 SESSION = requests.Session()
 SESSION.mount("https://", requests.adapters.HTTPAdapter(max_retries=RETRIES))
 SESSION.mount("http://",  requests.adapters.HTTPAdapter(max_retries=RETRIES))
 
-def download_file(url: str, dest: Path) -> Path:
-    """Stream‑download `url` into `dest` unless it already exists."""
+def download(url: str, dest: Path) -> Path:
     if dest.exists():
         return dest
     with SESSION.get(url, stream=True, timeout=TIMEOUT) as r:
@@ -105,11 +104,10 @@ def download_file(url: str, dest: Path) -> Path:
                 fp.write(chunk)
     return dest
 
-# ─────────────────────────── Helper → aspect‑fit ────────────────────────────
+# — Image helper (letter‑box fit) —
 def fit_image(img: Image.Image,
               upscale: bool = True,
-              bg: tuple[int, int, int] = (255, 255, 255)) -> Image.Image:
-    """Letter‑box the image to exactly (WIDTH, HEIGHT) preserving aspect."""
+              bg=(255, 255, 255)) -> Image.Image:
     try:
         img = img.convert("RGB")
         scale = min(WIDTH / img.width, HEIGHT / img.height)
@@ -123,20 +121,19 @@ def fit_image(img: Image.Image,
         print("fit_image failed:", e, file=sys.stderr)
         return Image.new("RGB", (WIDTH, HEIGHT), bg)
 
-# ─────────────────────────────── Core logic ─────────────────────────────────
-def fetch_random_xkcd() -> Path:
+# — Core —
+def fetch_xkcd() -> Path:
     html = SESSION.get(REMOTE_URL, timeout=TIMEOUT).text
-    img_tag = BeautifulSoup(html, "html.parser").select_one("div#comic img")
-    if not img_tag:
+    tag  = BeautifulSoup(html, "html.parser").select_one("div#comic img")
+    if not tag:
         raise RuntimeError("XKCD page contained no <img>")
-    img_url = urljoin(REMOTE_URL, img_tag["src"])
-    name = os.path.basename(urlparse(img_url).path) or "comic.png"
-    if not name.lower().endswith((".png", ".jpg", ".jpeg", ".gif")):
-        name += ".png"
-    return download_file(img_url, SAVE_DIR / name)
+    img_url = urljoin(REMOTE_URL, tag["src"])
+    fname   = os.path.basename(urlparse(img_url).path) or "comic.png"
+    if not fname.lower().endswith((".png", ".jpg", ".jpeg", ".gif")):
+        fname += ".png"
+    return download(img_url, SAVE_DIR / fname)
 
 def display(path: Path):
-    """Render to Inky or write side‑by‑side preview PNG in headless mode."""
     try:
         with Image.open(path) as raw:
             frame = fit_image(raw)
@@ -150,12 +147,12 @@ def display(path: Path):
     except (UnidentifiedImageError, OSError) as e:
         raise RuntimeError(f"Display failed: {e}") from None
 
-# ────────────────────────────── Main entry ──────────────────────────────────
-def main() -> None:
+# — Main —
+def main():
     try:
-        pic = fetch_random_xkcd()
-        display(pic)
-        print("Saved →", pic)
+        comic = fetch_xkcd()
+        display(comic)
+        print("Saved →", comic)
     except Exception as err:
         print("ERROR:", err, file=sys.stderr)
         sys.exit(1)
