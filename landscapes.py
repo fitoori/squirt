@@ -1,96 +1,165 @@
 #!/usr/bin/env python3
 """
-landscapes.py – fetch an unseen landscape painting (Met or AIC)
-and show it on a 7-colour Inky display, cropped full-screen.
+landscapes.py — fetch a previously unseen landscape painting (Met or AIC)
+and show it on an Inky e‑paper display cropped full‑screen.
 
-Usage:
-  ./landscape_inky.py           # random Met or AIC, any orientation
-  ./landscape_inky.py --wide    # landscape (width ≥ height) only
-  ./landscape_inky.py --tall    # portrait (height > width) only
-  ./landscape_inky.py --met     # Met only (add --wide/--tall if desired)
-  ./landscape_inky.py --aic     # AIC only
-  ./landscape_inky.py --reset   # clear seen.json then exit
+Usage
+-----
+  ./landscapes.py                 # random Met or AIC, any orientation
+  ./landscapes.py --wide          # landscape (w ≥ h) only
+  ./landscapes.py --tall          # portrait  (h > w) only
+  ./landscapes.py --met           # Met only   (flags still apply)
+  ./landscapes.py --aic           # AIC only
+  ./landscapes.py --reset         # clear seen.json and exit
 
-Every object ID is recorded in seen.json, even if orientation-rejected,
-so you’ll never see the same painting twice.
+Folders
+-------
+static/
+└── landscapes/
+    ├── seen.json     (object‑ID cache to avoid repeats)
+    └── *.jpg / *.png (images + *_preview.png when headless)
+
+Exit codes: 0 success, 1 failure.
 """
 
 from __future__ import annotations
-import argparse, io, json, os, random, re, subprocess, sys, time, requests
+import argparse, io, json, os, random, re, sys, time, subprocess, requests
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 from PIL import Image, UnidentifiedImageError
 
-# ───── configuration ─────────────────────────────────────────────────────────
-CACHE   = Path("seen.json")
-STATIC  = Path("static"); STATIC.mkdir(exist_ok=True)
-TIMEOUT = 15
-HEADLESS_RES       = (1600, 1200)
-FALLBACK_INKY_CLASS = "InkyImpressions73"   # change if your panel is different
-MAX_ATTEMPTS       = 30                     # tries per back-end to match orientation
+# ─────────────────────────── Configuration ──────────────────────────────
+ROOT_DIR       = Path(__file__).with_name("static")
+SAVE_DIR       = ROOT_DIR / "landscapes"
+SAVE_DIR.mkdir(parents=True, exist_ok=True)
 
-# ───── HTTP helper w/ request counter ────────────────────────────────────────
-session = requests.Session()
-session.headers["User-Agent"] = "LandscapeInky/1.3 (+github)"
+CACHE_FILE     = SAVE_DIR / "seen.json"
+TIMEOUT        = 15
+RETRIES        = 2
+HEADLESS_RES   = (1600, 1200)
+
+# Inky detection fallback class map
+INKY_TYPE      = "el133uf1"
+INKY_COLOUR    = None                    # for PHAT/WHAT, ignored otherwise
+
+MAX_ATTEMPTS   = 30                      # tries per backend for orientation
+
+# ─────────────────────────── Helper → pip install ──────────────────────────
+def _pip_install(*pkgs: str) -> None:
+    subprocess.run(
+        [sys.executable, "-m", "pip", "install", "--quiet", "--user",
+         "--break-system-packages", *pkgs],
+        check=False,
+    )
+
+# ─────────────────────────── Helper → Inky detect ──────────────────────────
+def init_inky():
+    try:
+        import inky, numpy  # noqa
+    except ModuleNotFoundError:
+        print("Installing inky & numpy…")
+        _pip_install("inky>=2.1.0", "numpy")
+        try:
+            import inky  # noqa
+        except ModuleNotFoundError:
+            pass
+
+    # 1) EEPROM auto‑detect
+    try:
+        from inky.auto import auto
+        dev = auto()
+        return dev, *dev.resolution
+    except Exception:
+        pass
+
+    # 2) Manual class map
+    class_map = {
+        "el133uf1":      "InkyEL133UF1",    # 13.3″ Spectra‑6
+        "impression73":  "InkyImpression73",# 7‑colour 7.3″ (fallback)
+        "spectra13":     "InkyEL133UF1",
+        "phat":          "InkyPHAT",
+        "what":          "InkyWHAT",
+    }
+    key = INKY_TYPE.lower()
+    if key not in class_map:
+        print("No Inky board detected and INKY_TYPE is unset — headless mode.")
+        return None, *HEADLESS_RES
+    try:
+        cls = getattr(__import__("inky", fromlist=[class_map[key]]),
+                      class_map[key])
+        dev = cls(INKY_COLOUR) if key in ("phat", "what") else cls()
+        return dev, *dev.resolution
+    except Exception as e:
+        print("Inky unavailable → headless mode:", e, file=sys.stderr)
+        return None, *HEADLESS_RES
+
+INKY, WIDTH, HEIGHT = init_inky()
+
+# ─────────────────────── Helper → HTTP session / download ──────────────────
+SESSION = requests.Session()
+SESSION.mount("https://", requests.adapters.HTTPAdapter(max_retries=RETRIES))
+SESSION.mount("http://",  requests.adapters.HTTPAdapter(max_retries=RETRIES))
+
 API_CALLS = 0
-
 def jget(url: str, **params) -> dict:
     global API_CALLS; API_CALLS += 1
-    r = session.get(url, params=params, timeout=TIMEOUT)
+    r = SESSION.get(url, params=params, timeout=TIMEOUT)
     r.raise_for_status()
     return r.json()
 
 def fetch(url: str) -> bytes:
     global API_CALLS; API_CALLS += 1
-    r = session.get(url, timeout=TIMEOUT)
+    r = SESSION.get(url, timeout=TIMEOUT)
     r.raise_for_status()
     return r.content
 
-# ───── seen-cache helpers ────────────────────────────────────────────────────
+# ─────────────────────── Helper → orientation & cache ──────────────────────
 def load_seen() -> Dict[str, List[str]]:
-    return json.loads(CACHE.read_text()) if CACHE.exists() else {}
+    if CACHE_FILE.exists():
+        try:
+            return json.loads(CACHE_FILE.read_text())
+        except json.JSONDecodeError:
+            pass
+    return {}
 
 SEEN: Dict[str, List[str]] = load_seen()
+
+def mark_seen(museum: str, oid: str) -> None:
+    SEEN.setdefault(museum, []).append(oid)
+    CACHE_FILE.write_text(json.dumps(SEEN, indent=2))
 
 def seen(museum: str, oid: str) -> bool:
     return oid in SEEN.get(museum, [])
 
-def mark_seen(museum: str, oid: str) -> None:
-    SEEN.setdefault(museum, []).append(oid)
-    CACHE.write_text(json.dumps(SEEN, indent=2))
-
 def slug(text: str, maxlen: int = 60) -> str:
-    txt = re.sub(r"[^A-Za-z0-9]+", "_", text).strip("_")
-    return (txt[:maxlen] or "untitled").lower()
+    return re.sub(r"[^A-Za-z0-9]+", "_", text)[:maxlen].strip("_").lower() or "untitled"
 
 def save_if_ok(img_bytes: bytes,
                title: str,
                museum: str,
                oid: str,
-               want_wide: bool|None) -> Path|None:
+               want_wide: Optional[bool]) -> Optional[Path]:
     """
-    Decode the bytes to check orientation. If matches want_wide (or
-    want_wide is None), save + mark_seen, and return Path.
-    Otherwise mark_seen and return None.
+    Decode bytes, check orientation, save & mark seen if matches.
+    Returns Path on success else None (still marks seen).
     """
     try:
-        with Image.open(io.BytesIO(img_bytes)) as im:
-            wide = im.width >= im.height
+        with Image.open(io.BytesIO(img_bytes)) as img:
+            wide = img.width >= img.height
             if want_wide is None or want_wide == wide:
-                fn = STATIC / f"{slug(title)}_{museum}_{oid}.jpg"
-                if not fn.exists():
-                    fn.write_bytes(img_bytes)
+                name = f"{slug(title)}_{museum}_{oid}.jpg"
+                path = SAVE_DIR / name
+                if not path.exists():
+                    path.write_bytes(img_bytes)
                 mark_seen(museum, oid)
-                return fn
+                return path
     except UnidentifiedImageError:
         pass
-
-    # reject mismatch or unreadable but still mark seen
     mark_seen(museum, oid)
     return None
 
-# ───── Met backend ───────────────────────────────────────────────────────────
-def met_random(want_wide: bool|None) -> Path:
+# ─────────────────────── Met backend ────────────────────────────────────────
+def met_random(want_wide: Optional[bool]) -> Path:
     data = jget(
         "https://collectionapi.metmuseum.org/public/collection/v1/search",
         q="landscape", medium="Paintings", hasImages="true"
@@ -109,22 +178,18 @@ def met_random(want_wide: bool|None) -> Path:
         if not url:
             continue
 
-        pic = save_if_ok(
-            fetch(url),
-            obj.get("title", f"met_{oid}"),
-            "met",
-            str(oid),
-            want_wide
+        path = save_if_ok(
+            fetch(url), obj.get("title", f"met_{oid}"),
+            "met", str(oid), want_wide
         )
-        if pic:
-            return pic
-
+        if path:
+            return path
         attempts += 1
 
     raise RuntimeError("Met: no unseen painting matched the requested orientation")
 
-# ───── AIC backend (retry, safe pages) ───────────────────────────────────────
-def aic_random(want_wide: bool|None) -> Path:
+# ─────────────────────── AIC backend ────────────────────────────────────────
+def aic_random(want_wide: Optional[bool]) -> Path:
     base = "https://www.artic.edu/iiif/2"
     attempts = 0
 
@@ -132,125 +197,71 @@ def aic_random(want_wide: bool|None) -> Path:
         if attempts >= MAX_ATTEMPTS:
             break
         page = random.randint(1, 50)
-        try:
-            hits = jget(
-                "https://api.artic.edu/api/v1/artworks/search",
-                q="landscape",
-                fields="id,title,image_id",
-                page=page,
-                limit=100
-            )["data"]
-        except requests.HTTPError:
-            continue
-
+        hits = jget(
+            "https://api.artic.edu/api/v1/artworks/search",
+            q="landscape", fields="id,title,image_id",
+            page=page, limit=100
+        ).get("data", [])
         random.shuffle(hits)
         for h in hits:
             oid, img_id = str(h["id"]), h["image_id"]
             if not img_id or seen("aic", oid):
                 continue
-
             url = f"{base}/{img_id}/full/843,/0/default.jpg"
-            pic = save_if_ok(
-                fetch(url),
-                h.get("title", f"aic_{oid}"),
-                "aic",
-                oid,
-                want_wide
-            )
-            if pic:
-                return pic
-
+            path = save_if_ok(fetch(url), h["title"], "aic", oid, want_wide)
+            if path:
+                return path
             attempts += 1
 
     raise RuntimeError("AIC: no unseen painting matched the requested orientation")
 
-# ───── Inky initialisation ───────────────────────────────────────────────────
-def init_inky():
-    try:
-        import inky, numpy  # noqa: F401
-    except ModuleNotFoundError:
-        subprocess.run([
-            sys.executable, "-m", "pip", "install", "--quiet", "--user",
-            "inky>=2.1.0", "numpy"
-        ], check=False)
-        import inky  # noqa: F401
-
-    try:
-        from inky.auto import auto
-        dev = auto()
-        return dev, *dev.resolution
-    except Exception:
-        try:
-            mod = __import__("inky.impressions", fromlist=[FALLBACK_INKY_CLASS])
-            cls = getattr(mod, FALLBACK_INKY_CLASS)
-            dev = cls()
-            return dev, *dev.resolution
-        except Exception as e:
-            print("Inky unavailable (headless):", e, file=sys.stderr)
-            return None, *HEADLESS_RES
-
-inky, WIDTH, HEIGHT = init_inky()
-
-# ───── image fit = cover crop ─────────────────────────────────────────────────
-def fit(img: Image.Image) -> Image.Image:
+# ─────────────────────── Image fit helper (cover) ───────────────────────────
+def fit_image_cover(img: Image.Image) -> Image.Image:
     img = img.convert("RGB")
-    # scale to overfill at least one dimension
     scale = max(WIDTH / img.width, HEIGHT / img.height)
-    new = img.resize((round(img.width * scale), round(img.height * scale)), Image.LANCZOS)
-    # centre-crop to exact panel
-    left = (new.width - WIDTH) // 2
-    top  = (new.height - HEIGHT) // 2
-    return new.crop((left, top, left + WIDTH, top + HEIGHT))
+    new = img.resize((round(img.width*scale), round(img.height*scale)),
+                     Image.LANCZOS)
+    l = (new.width - WIDTH)//2; t = (new.height - HEIGHT)//2
+    return new.crop((l, t, l+WIDTH, t+HEIGHT))
 
-# ───── display (robust, headless preview) ────────────────────────────────────
+# ───────────────────────────── display helper ──────────────────────────────
 def display(path: Path):
     try:
         with Image.open(path) as raw:
-            frame = fit(raw)
-            if inky:
-                try:
-                    inky.set_image(frame)  # let device handle its palette
-                    inky.show()
-                except Exception as e:
-                    print("Inky error:", e, file=sys.stderr)
-                    raise
+            frame = fit_image_cover(raw)
+            if INKY:
+                INKY.set_image(frame)
+                INKY.show()
             else:
-                raise RuntimeError("headless")
-    except Exception:
-        # fallback preview
-        preview = path.with_suffix(".preview.png")
-        with Image.open(path) as raw:
-            fit(raw).save(preview)
-        print("Headless preview →", preview)
+                preview = path.with_suffix(".preview.png")
+                frame.save(preview)
+                print("Headless preview →", preview)
+    except (UnidentifiedImageError, OSError) as e:
+        raise RuntimeError(f"Display failed: {e}") from None
 
-# ───── CLI & main ────────────────────────────────────────────────────────────
+# ───────────────────────────── CLI parsing ─────────────────────────────────
 def parse_args():
-    p = argparse.ArgumentParser(description="Show an unseen landscape painting")
-    group_src = p.add_mutually_exclusive_group()
-    group_src.add_argument("--met", action="store_true", help="only from The Met")
-    group_src.add_argument("--aic", action="store_true", help="only from AIC")
+    p = argparse.ArgumentParser(description="Display an unseen landscape painting")
+    src = p.add_mutually_exclusive_group()
+    src.add_argument("--met", action="store_true", help="only from The Met")
+    src.add_argument("--aic", action="store_true", help="only from AIC")
 
-    group_ori = p.add_mutually_exclusive_group()
-    group_ori.add_argument("--wide", action="store_true", help="landscape only (w ≥ h)")
-    group_ori.add_argument("--tall", action="store_true", help="portrait only (h > w)")
+    ori = p.add_mutually_exclusive_group()
+    ori.add_argument("--wide", action="store_true", help="landscape only (w ≥ h)")
+    ori.add_argument("--tall", action="store_true", help="portrait only (h > w)")
 
     p.add_argument("--reset", action="store_true", help="clear seen.json then exit")
     return p.parse_args()
 
+# ─────────────────────────────── Main ──────────────────────────────────────
 def main():
     args = parse_args()
     if args.reset:
-        CACHE.unlink(missing_ok=True)
+        CACHE_FILE.unlink(missing_ok=True)
         print("seen.json cleared")
         return
 
-    want_wide: bool|None = None
-    if args.wide:
-        want_wide = True
-    elif args.tall:
-        want_wide = False
-
-    random.seed(time.time_ns())
+    want_wide: Optional[bool] = True if args.wide else False if args.tall else None
     backends = (
         [met_random] if args.met else
         [aic_random] if args.aic else
@@ -261,14 +272,14 @@ def main():
     for be in backends:
         try:
             pic = be(want_wide)
-            print("Saved →", pic)
             display(pic)
+            print("Saved →", pic)
             print("HTTP requests this run:", API_CALLS)
             return
         except Exception as e:
             print(f"[{be.__name__}] {e}", file=sys.stderr)
 
-    sys.exit("All back-ends failed")
+    sys.exit("All back‑ends failed")
 
 if __name__ == "__main__":
     main()
