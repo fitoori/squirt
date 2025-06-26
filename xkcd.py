@@ -3,7 +3,7 @@
 xkcd.py — fetch a random XKCD comic and show it on an Inky e‑paper display
 (or save a PNG preview when no board is present).
 
-This version follows the unified YorozuyaTech helper conventions so that all
+This version follows the unified squirt helper conventions so that all
 related scripts share the same structure, logging style, and folder layout.
 
 Folders
