@@ -38,6 +38,7 @@ python3 -m pip install --user inky numpy requests beautifulsoup4 pillow
 mkdir -p static/saved
 cp *.jpg static/saved/
 ./save.py
+```bash
 
 Tip  If your Inky board has no EEPROM, set
 INKY_TYPE=el133uf1 (13.3″ Spectra-6), phat, or what
@@ -92,6 +93,7 @@ Delete any file and the script will simply re-download or skip it next time.
 
 systemd timer for a daily comic
 
+```bash
 # /etc/systemd/system/xkcd.service
 [Service]
 Type=oneshot
@@ -111,7 +113,7 @@ Enable with:
 
 sudo systemctl daemon-reload
 sudo systemctl enable --now xkcd.timer
-
+```bash
 
 ⸻
 
