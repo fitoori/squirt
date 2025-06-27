@@ -18,7 +18,6 @@ static/
 
 ## 1. Quick Start
 
-```bash
 # Clone / copy scripts onto your Pi
 chmod +x xkcd.py nasa.py landscapes.py save.py
 
@@ -38,7 +37,6 @@ python3 -m pip install --user inky numpy requests beautifulsoup4 pillow
 mkdir -p static/saved
 cp *.jpg static/saved/
 ./save.py
-```bash
 
 Tip  If your Inky board has no EEPROM, set
 INKY_TYPE=el133uf1 (13.3″ Spectra-6), phat, or what
