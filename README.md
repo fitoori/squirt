@@ -60,18 +60,6 @@ Cycle through static/saved/, or download & show a URL:
 
 ./save.py [URL] [--folder DIR] [--reset]
 
-
-⸻
-
-Script Cheat-Sheet
-
-Script	Description	Flags / Args
-xkcd.py	Random XKCD comic	none
-nasa.py	Single NASA image	--apod, --mars [ROVER], --epic, --earth LAT LON [--dim],--search "QUERY", --key API_KEY
-landscapes.py	Unseen landscape painting (Met / AIC)	--met, --aic, --wide, --tall, --reset
-save.py	Next image in folder or download a URL into saved	[URL], --folder DIR, --reset
-
-
 ⸻
 
 Hardware Notes
