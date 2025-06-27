@@ -1,6 +1,6 @@
 # SQUIRT  
-Spectra-Qualified Unified Inky Rendering Tools
-
+_Spectra-Qualified Uncomplicated Inky Rendering Tools_
+-
 A set of four one-shot Python 3 scripts for Raspberry Pi (or any Linux SBC)  
 that fetch or cycle images and display them on an Inky e-paper panel  
 (13.3″ Spectra-6 Impression, 7-colour Impression 7.3″, PHAT, WHAT, or any board detected by `inky.auto`).  
