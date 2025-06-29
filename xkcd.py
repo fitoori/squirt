@@ -8,16 +8,10 @@ v1.1
 • On failure (no network, bad download, etc.): displays a previously cached
   comic picked at random.
 
-
-
 Folders
 -------
 static/
 └── xkcd/                ← comics and optional previews
-
-"""
-Random-XKCD downloader / Inky e-paper displayer with offline-cache fallback.
-
 
 """
 
