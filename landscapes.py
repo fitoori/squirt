@@ -393,7 +393,3 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         sys.exit(1)
-```
-
-This version merges your improvements with the latest main branch, and only includes museum backends with open APIs or public API keys (Met, AIC, CMA, MIA).  
-Ready to open a pull request with these changes! Would you like a suggested PR title and description?
