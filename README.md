@@ -45,7 +45,7 @@ When no hardware is present, each script falls back to headless mode and writes 
     ```bash
     git clone https://github.com/fitoori/squirt.git
     cd squirt
-    sudo chmod +x xkcd.py nasa.py landscapes.py save.py
+    sudo chmod +x xkcd.py nasa.py landscapes.py save.py status.py
     ```
 
 5. **Enable the virtual environment created by Pimoroni’s inky script**
@@ -57,6 +57,16 @@ When no hardware is present, each script falls back to headless mode and writes 
     ```bash
     pip3 install inky numpy requests beautifulsoup4 pillow
     ```
+7. **(Optional) Edit Crontab**
+    ```bash
+    crontab -e
+    ```
+    Scroll down to the bottom, paste in the following:
+    ```bash
+    0 * * * * python3 /home/$USER/squirt/xkcd.py
+    @reboot sleep 10 && python3 /home/$USER/squirt/status.py && sleep 30 && python3 /home/$USER/squirt/nasa.py --apod &
+    ```
+    The first line will refresh the display once per hour to a display a new xkcd comic. The second line runs status.py message on boot, leaves it for ~30 seconds, then switches to showing NASA's Astronomy Photo of the Day (apod). 
 
 ---
 
