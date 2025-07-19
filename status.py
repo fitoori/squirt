@@ -1,26 +1,11 @@
 #!/usr/bin/env python3
 """
-Boot-time status dashboard for Inky e-paper panels
-=================================================
+status.py – Production Build v1.2
+───────────────────────────────────────────
+Displays system status, connectivity, disk usage, thermal state, battery and RTC health (if available).
+Designed for Inky e-paper displays; runs headless and outputs PNG for preview if no hardware present.
+Usage: See CLI flags below for options to override warning indicator and battery/RTC checks.
 
-Features
---------
-• Pings NASA & XKCD (3 attempts each)   • Filesystem free-space %
-• PiSugar battery / charging (opt-out)  • RTC value & drift
-
-Error indicator
----------------
-A yellow ▲ with a black “!” appears when any probe fails.
-Flags / env-vars let you force or suppress the triangle:
-
-    --force-triangle      or STATUS_FORCE_WARN=1
-    --no-triangle         or STATUS_NO_WARN=1
-    --no-pisugar          or STATUS_NO_PISUGAR=1   # skip battery & RTC
-
-Folder structure
-----------------
-Rendered PNG previews (headless runs) are written to
-`static/status/preview_<timestamp>.png`.
 """
 
 from __future__ import annotations
@@ -28,59 +13,55 @@ import argparse, os, shutil, subprocess, sys, time, datetime as dt, logging, soc
 from pathlib import Path
 from typing import Tuple, List
 from datetime import timezone
+from PIL import Image, ImageDraw, ImageFont
 
-# ────────────────────── CLI flags & env-vars ───────────────────────────────
-parser = argparse.ArgumentParser()
-parser.add_argument("--force-triangle", action="store_true",
-                    help="always draw warning triangle")
-parser.add_argument("--no-triangle", action="store_true",
-                    help="never draw warning triangle")
-parser.add_argument("--no-pisugar",   action="store_true",
-                    help="disable PiSugar battery & RTC probes")
-CLI, _ = parser.parse_known_args()
 
-ENV_FORCE     = bool(os.getenv("STATUS_FORCE_WARN"))
-ENV_NO_WARN   = bool(os.getenv("STATUS_NO_WARN"))
-ENV_NO_PISUG  = bool(os.getenv("STATUS_NO_PISUGAR"))
+# ─── CLI ───────────────────────────────────────────────────────────────────
+P = argparse.ArgumentParser()
+P.add_argument("--force-triangle", action="store_true")
+P.add_argument("--no-triangle",    action="store_true")
+P.add_argument("--no-pisugar",     action="store_true")
+CLI, _ = P.parse_known_args()
+
+ENV_FORCE   = bool(os.getenv("STATUS_FORCE_WARN"))
+ENV_NO_WARN = bool(os.getenv("STATUS_NO_WARN"))
+ENV_NO_PISU = bool(os.getenv("STATUS_NO_PISUGAR"))
 
 ALWAYS_WARN = (CLI.force_triangle or ENV_FORCE) and not (CLI.no_triangle or ENV_NO_WARN)
-NEVER_WARN  = (CLI.no_triangle    or ENV_NO_WARN)
-USE_PISUGAR = not (CLI.no_pisugar or ENV_NO_PISUG)
+NEVER_WARN  = CLI.no_triangle or ENV_NO_WARN
+USE_PISUGAR = not (CLI.no_pisugar or ENV_NO_PISU)
 
-# ───────────────────────────── Paths & logging ─────────────────────────────
+
+# ─── Paths & logging ───────────────────────────────────────────────────────
 ROOT   = Path(__file__).with_name("static")
 STATUS = ROOT / "status"; STATUS.mkdir(parents=True, exist_ok=True)
 LOG    = STATUS / f"boot_{dt.datetime.now():%Y%m%d_%H%M%S}.log"
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)-7s %(message)s",
-    handlers=[logging.FileHandler(LOG), logging.StreamHandler(sys.stdout)],
-)
+logging.basicConfig(level=logging.INFO,
+                    format="%(asctime)s %(levelname)-7s %(message)s",
+                    handlers=[logging.FileHandler(LOG),
+                              logging.StreamHandler(sys.stdout)])
 log = logging.getLogger("status")
 
-# ───────────────────────────── Hardware / Display ──────────────────────────
-INKY_TYPE, INKY_COLOUR = "el133uf1", None
-HEADLESS_RES           = (1600, 1200)  # same as 13.3″ Spectra-6
 
-def _pip_install(*pkgs: str) -> None:
-    subprocess.run(
-        [sys.executable, "-m", "pip", "install", "--quiet", "--user",
-         "--break-system-packages", *pkgs],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False
-    )
+# ─── Display probe ─────────────────────────────────────────────────────────
+INKY_TYPE, INKY_COLOUR = "el133uf1", None
+HEADLESS_RES = (1600, 1200)
+
+def _pip_install(*pkgs: str):
+    subprocess.run([sys.executable, "-m", "pip", "install", "--quiet",
+                    "--user", "--break-system-packages", *pkgs],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 def init_inky() -> Tuple[object | None, int, int]:
     try:
-        import inky, numpy  # noqa
+        import inky, numpy  # noqa: F401
     except ModuleNotFoundError:
         _pip_install("inky>=2.1.0", "numpy")
         try:
-            import inky  # noqa
+            import inky  # noqa: F401
         except ModuleNotFoundError:
             return None, *HEADLESS_RES
 
-    # 1) EEPROM auto-detect
     try:
         from inky.auto import auto
         dev = auto()
@@ -88,8 +69,9 @@ def init_inky() -> Tuple[object | None, int, int]:
     except Exception:
         pass
 
-    # 2) Manual class map
-    class_map = {"el133uf1": "InkyEL133UF1", "phat": "InkyPHAT", "what": "InkyWHAT"}
+    class_map = {"el133uf1": "InkyEL133UF1",
+                 "phat": "InkyPHAT",
+                 "what": "InkyWHAT"}
     try:
         cls = getattr(__import__("inky", fromlist=[class_map[INKY_TYPE]]),
                       class_map[INKY_TYPE])
@@ -100,71 +82,98 @@ def init_inky() -> Tuple[object | None, int, int]:
 
 INKY, WIDTH, HEIGHT = init_inky()
 if not INKY:
-    log.warning("Headless mode: no Inky detected")
+    log.warning("Headless mode")
 
-# ───────────────────────────── Appearance ──────────────────────────────────
-# Spectra-6 palette (white omitted)
-CLR_BLACK = (0, 0, 0)
-CLR_RED   = (220, 0, 0)
-CLR_YELL  = (255, 215, 0)
-CLR_ORNG  = (255, 140, 0)
-CLR_GRN   = (0, 170, 0)
-CLR_BLUE  = (0, 0, 255)
 
-CLR_OK, CLR_WARN, CLR_ERR = CLR_GRN, CLR_ORNG, CLR_RED
-CLR_TXT, CLR_BG           = CLR_BLACK, (255, 255, 255)
+# ─── Palette ───────────────────────────────────────────────────────────────
+PAL = {
+    "BLACK": "#000",
+    "WHITE": "#FFF",
+    "RED"  : "#F00",
+    "YEL"  : "#FF0",
+    "BLU"  : "#00F",
+    "GRN"  : "#0A0",
+}
 
-# Fonts & layout
+def _hex(h: str) -> Tuple[int, int, int]:
+    h = h.lstrip("#")
+    if len(h) == 3:
+        h = "".join(c * 2 for c in h)
+    return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+
+CLR_BLACK, CLR_WHITE, CLR_RED, CLR_YEL, CLR_BLU, CLR_GRN = map(_hex, PAL.values())
+CLR_ORNG = (255, 140, 0)
+CLR_OK, CLR_WARN, CLR_ERR = CLR_GRN, CLR_YEL, CLR_RED
+CLR_TXT, CLR_BG = CLR_BLACK, CLR_WHITE
+
+
+# ─── Layout ────────────────────────────────────────────────────────────────
 FONT_STATUS = 48
-FONT_BANNER = int(FONT_STATUS * 3.0)   # 40 % larger than previous 2.2×
-FONT_BANG   = int(FONT_BANNER * 0.8)
+FONT_BANNER = int(FONT_STATUS * 3)
+FONT_BANG   = int(FONT_BANNER * 0.30)
 FONT_FOOT   = 40
 
-LINE_H      = 130  # tighter stack
-LEFT_PAD    = 80
-ICON_R      = 24
-EDGE_MARGIN = 48
-BANNER_COL  = [CLR_BLACK, CLR_RED, CLR_YELL, CLR_ORNG, CLR_GRN, CLR_BLUE]
+LINE_H   = 160            # ↑ increased
+LEFT_PAD = 80
+EDGE     = 48
+ICON_R   = 24
+COL_W    = (WIDTH - 2 * LEFT_PAD) // 2
 
-from PIL import Image, ImageDraw, ImageFont
+# Thermometer sizing & temp scale
+THM_SCALE    = 1.25       # ↑ 25 %
+THM_W        = int(14 * THM_SCALE)
+THM_H        = int((LINE_H - 20) * 0.75 * THM_SCALE)
+THM_BULB_R   = THM_W
+
+TEMP_MIN = 20.0           # °C
+TEMP_MAX = 75.0
+TEMP_GRN = 55.0
+TEMP_YEL = 60.0           # ≥60 → red
 
 def _font(sz: int, bold=False):
-    path = f"/usr/share/fonts/truetype/dejavu/DejaVuSans{'-Bold' if bold else ''}.ttf"
+    p = f"/usr/share/fonts/truetype/dejavu/DejaVuSans{'-Bold' if bold else ''}.ttf"
     try:
-        return ImageFont.truetype(path, sz)
+        return ImageFont.truetype(p, sz)
     except Exception:
         return ImageFont.load_default()
 
 F_STAT = _font(FONT_STATUS)
-F_BANN = _font(FONT_BANNER, bold=True)
-F_BANG = _font(FONT_BANG,  bold=True)
+F_BANN = _font(FONT_BANNER, True)
+F_BANG = _font(FONT_BANG)
 F_FOOT = _font(FONT_FOOT)
 
-def txt_w(font, txt: str) -> int:
-    try:
-        return int(font.getlength(txt))
-    except AttributeError:
-        return font.getbbox(txt)[2]
+def txt_w(f, t):
+    return int(getattr(f, "getlength", lambda s: f.getbbox(s)[2])(t))
 
-# ───────────────────────────── Probes ──────────────────────────────────────
-PING = {"nasa.gov": "NASA", "xkcd.com": "XKCD"}
-PING_CT, PING_TO = 3, 2  # 3 attempts
+
+# ─── Probes ────────────────────────────────────────────────────────────────
+PING_CT, PING_TO = 3, 2
 
 def ping_ok(host: str):
     try:
-        rc = subprocess.run(
-            ["ping", "-c", str(PING_CT), "-W", str(PING_TO), host],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        ).returncode
-        ok = rc == 0
-        return ok, "OK" if ok else "FAIL"
+        rc = subprocess.run(["ping", "-c", str(PING_CT), "-W", str(PING_TO), host],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode
+        return rc == 0, "OK" if rc == 0 else "FAIL"
     except FileNotFoundError:
         return False, "N/A"
 
+def human(n: int):
+    units = ["B", "KiB", "MiB", "GiB", "TiB"]
+    v = float(n)
+    for u in units:
+        if v < 1024 or u == units[-1]:
+            return f"{v:0.1f} {u}"
+        v /= 1024
+
+def format_storage_line(free_b: int, total_b: int):
+    used_pct = (1 - free_b / total_b) * 100 if total_b else 0.0
+    free_str = human(free_b)
+    return f"Storage: {used_pct:0.1f}%\n({free_str} available)"
+
 def storage_info():
-    t, _, f = shutil.disk_usage("/")
-    pct = f / t * 100 if t else 0
-    return pct >= 15, f"{pct:4.1f}% free", pct
+    total, _, free = shutil.disk_usage("/")
+    ok = (free / total * 100) >= 15 if total else False
+    return ok, format_storage_line(free, total), (free / total * 100 if total else 0)
 
 def _pisugar(cmd: str):
     try:
@@ -202,18 +211,19 @@ def rtc_info():
     except ValueError:
         return False, f"malformed {ts}"
 
-def colour(ok: bool | None, pct: float | None = None):
-    if ok is None:  # PiSugar disabled
-        return CLR_TXT
-    if pct is not None:
-        return CLR_OK if pct >= 15 else CLR_WARN if pct >= 5 else CLR_ERR
-    return CLR_OK if ok else CLR_ERR
+def cpu_temp():
+    try:
+        with open("/sys/class/thermal/thermal_zone0/temp") as f:
+            return True, int(f.read().strip()) / 1000
+    except Exception:
+        return False, None
 
-# ───────────────────────────── Drawing helpers ────────────────────────────
-def safe_wrap(text: str, max_w: int, font) -> str:
-    words = text.split(" ")
-    if len(words) == 1:
+
+# ─── Drawing helpers ───────────────────────────────────────────────────────
+def wrap(text: str, max_w: int, font):
+    if "\n" in text:
         return text
+    words = text.split(" ")
     out, cur = "", words[0]
     for w in words[1:]:
         trial = f"{cur} {w}"
@@ -224,106 +234,159 @@ def safe_wrap(text: str, max_w: int, font) -> str:
             cur = w
     return out + cur
 
-def draw_stat(d: ImageDraw.Draw, y: int, label: str, text: str, clr):
-    cx = LEFT_PAD // 2
-    d.ellipse((cx - ICON_R, y + ICON_R / 2, cx + ICON_R, y + ICON_R * 2.5),
+def draw_stat(d: ImageDraw.Draw, y: int, label: str, txt: str, clr, col: int = 0):
+    x0 = LEFT_PAD + col * COL_W
+    cx = x0 - LEFT_PAD // 2
+    d.ellipse((cx - ICON_R, y + ICON_R / 2,
+               cx + ICON_R, y + ICON_R * 2.5),
               fill=clr, outline=clr)
-    wrapped = safe_wrap(f"{label}: {text}",
-                        WIDTH - LEFT_PAD - EDGE_MARGIN, F_STAT)
-    d.multiline_text((LEFT_PAD, y), wrapped, font=F_STAT,
-                     fill=CLR_TXT, spacing=2)
+    message = f"{label}: {txt}" if label else txt
+    d.multiline_text((x0, y),
+                     wrap(message, COL_W - EDGE, F_STAT),
+                     font=F_STAT, fill=CLR_TXT, spacing=4)
+
+def render_cpu(d: ImageDraw.Draw, x: int, y: int, h: int, temp: float | None):
+    """Draw segmented thermometer (green/yellow/red) and tick line."""
+    top = y + THM_BULB_R
+    # segment heights (proportional to temp thresholds)
+    span = TEMP_MAX - TEMP_MIN
+    red_h    = int(h * (TEMP_MAX - TEMP_YEL) / span)           # 15 °C
+    yellow_h = int(h * (TEMP_YEL - TEMP_GRN) / span)           # 5 °C
+    green_h  = h - red_h - yellow_h                            # remainder
+
+    # Bars (draw top→bottom)
+    d.rectangle([x, top, x + THM_W, top + red_h],              fill=CLR_RED)
+    d.rectangle([x, top + red_h,
+                 x + THM_W, top + red_h + yellow_h],           fill=CLR_YEL)
+    d.rectangle([x, top + red_h + yellow_h,
+                 x + THM_W, top + h],                          fill=CLR_GRN)
+
+    # Bulb
+    cx, cy = x + THM_W // 2, top + h
+    d.ellipse([cx - THM_BULB_R, cy - THM_BULB_R,
+               cx + THM_BULB_R, cy + THM_BULB_R],
+              fill=CLR_GRN)
+
+    # Tick line
+    if temp is not None:
+        t = max(TEMP_MIN, min(TEMP_MAX, temp))
+        ratio = (t - TEMP_MIN) / span
+        py = top + h - int(ratio * h)
+        d.line([x - 4, py, x + THM_W + 4, py],
+               fill=CLR_BLACK, width=4)
+
+def draw_cpu(d: ImageDraw.Draw, y: int, temp: float | None, col: int = 0):
+    """CPU line with thermometer centred on its text."""
+    x0 = LEFT_PAD + col * COL_W
+    cx = x0 - LEFT_PAD // 2
+
+    txt = "CPU N/A" if temp is None else f"CPU {temp:0.1f}℃"
+    wrapped = wrap(txt, COL_W - EDGE, F_STAT)
+
+    # Estimate text height
+    lines   = wrapped.count("\n") + 1
+    text_h  = lines * FONT_STATUS + (lines - 1) * 4
+
+    thermo_centre = y + text_h // 2
+    thermo_top    = int(thermo_centre - (THM_BULB_R + THM_H / 2))
+
+    render_cpu(d, cx - THM_W // 2, thermo_top, THM_H, temp)
+    d.multiline_text((x0, y), wrapped,
+                     font=F_STAT, fill=CLR_TXT, spacing=4)
 
 def banner(d: ImageDraw.Draw):
     gap = 26
     txt = "SQUIRT"
+    cols = [CLR_BLACK, CLR_RED, CLR_YEL, CLR_ORNG, CLR_GRN, CLR_BLU]
     total = sum(txt_w(F_BANN, c) for c in txt) + (len(txt) - 1) * gap
     x = (WIDTH - total) // 2
     for i, c in enumerate(txt):
-        d.text(
-            (x, 12),
-            c,
-            font=F_BANN,
-            fill=BANNER_COL[i],
-            stroke_width=2,
-            stroke_fill=CLR_BLACK,
-        )
+        d.text((x, 12), c, font=F_BANN,
+               fill=cols[i], stroke_width=2, stroke_fill=CLR_BLACK)
         x += txt_w(F_BANN, c) + gap
 
-def warning_triangle(d: ImageDraw.Draw):
+def warn_triangle(d: ImageDraw.Draw):
     bang = "!"
     bx0, by0, bx1, by1 = d.textbbox((0, 0), bang, font=F_BANG)
-    bw, bh = bx1 - bx0, by1 - by0
-
-    grow = 1.20
-    pad  = 16
-    side = int((max(bw, bh) + 2 * pad) * grow)
-    h    = int(side * 3 ** 0.5 / 2)
-    cx   = WIDTH // 2
-    top  = HEIGHT - 184 - h
-
+    side = int(max(bx1 - bx0, by1 - by0) * 1.2 + 32)
+    h = int(side * (3 ** 0.5) / 2)
+    cx, top = WIDTH // 2, HEIGHT - 184 - h
     pts = [(cx, top),
            (cx - side // 2, top + h),
            (cx + side // 2, top + h)]
-    d.polygon(pts, fill=CLR_YELL)
+    d.polygon(pts, fill=CLR_YEL)
     for i in range(3):
         d.line([pts[i], pts[(i + 1) % 3]], fill=CLR_BLACK, width=6)
-
-    tx = cx - bw // 2
-    ty = top + h * 0.46 - bh // 2
-    d.text((tx, ty), bang, font=F_BANG, fill=CLR_BLACK)
+    d.text((cx - (bx1 - bx0) // 2, top + 0.46 * h - (by1 - by0) // 2),
+           bang, font=F_BANG, fill=CLR_BLACK)
 
 def footer(d: ImageDraw.Draw, warn: bool):
     if warn and not NEVER_WARN:
-        warning_triangle(d)
+        warn_triangle(d)
     y = HEIGHT - 136
-    for i, ln in enumerate(("This screen will automatically refresh.",
-                            "Please standby as normal function resumes…")):
-        d.text(((WIDTH - txt_w(F_FOOT, ln)) // 2, y + i * (FONT_FOOT + 4)),
-               ln, font=F_FOOT, fill=CLR_TXT)
+    for i, line in enumerate(("This screen will automatically refresh.",
+                              "Please standby as normal function resumes…")):
+        d.text(((WIDTH - txt_w(F_FOOT, line)) // 2,
+                y + i * (FONT_FOOT + 4)),
+               line, font=F_FOOT, fill=CLR_TXT)
 
-# ───────────────────────────── Frame builder ──────────────────────────────
+
+# ─── Frame builder ────────────────────────────────────────────────────────
 def make_frame():
     img = Image.new("RGB", (WIDTH, HEIGHT), CLR_BG)
-    d = ImageDraw.Draw(img)
-
+    d   = ImageDraw.Draw(img)
     banner(d)
+
     y = FONT_BANNER + 60
     errs: List[str] = []
 
-    for host, tag in PING.items():
-        ok, txt = ping_ok(host)
-        draw_stat(d, y, f"{tag} ping", txt, colour(ok))
-        y += LINE_H
-        if not ok:
-            errs.append(f"{host} ping")
+    ok1, t1 = ping_ok("nasa.gov")
+    ok2, t2 = ping_ok("xkcd.com")
+    draw_stat(d, y, "NASA ping", t1, CLR_OK if ok1 else CLR_ERR, 0)
+    draw_stat(d, y, "XKCD ping", t2, CLR_OK if ok2 else CLR_ERR, 1)
 
-    ok, txt, pct = storage_info()
-    draw_stat(d, y, "Storage", txt, colour(ok, pct))
+    if not ok1:
+        errs.append("NASA ping")
+    if not ok2:
+        errs.append("XKCD ping")
+
     y += LINE_H
-    if not ok:
-        errs.append("Low disk")
+    ok_st, txt_st, free_pct = storage_info()
+    ok_cpu, deg            = cpu_temp()
 
+    draw_stat(d, y, "", txt_st,
+              CLR_ERR if free_pct < 10 else CLR_WARN if free_pct < 20 else CLR_OK,
+              0)
+    draw_cpu (d, y, deg, 1)
+
+    if not ok_st:
+        errs.append("Disk")
+    if not ok_cpu:
+        errs.append("CPU temp")
+
+    y += LINE_H
     if USE_PISUGAR:
-        ok, txt = bat_info()
-        draw_stat(d, y, "Battery", txt, colour(ok))
-        y += LINE_H
-        if not ok:
+        ok_b, txt_b = bat_info()
+        draw_stat(d, y, "Battery", txt_b, CLR_OK if ok_b else CLR_ERR, 0)
+        if not ok_b:
             errs.append("Battery")
 
-        ok, txt = rtc_info()
+        y += LINE_H
+        ok_r, txt_r = rtc_info()
         now = dt.datetime.now().strftime("%Y-%m-%d %H:%M")
-        draw_stat(d, y, "Clock", f"{now} | {txt}", colour(ok))
-        if not ok:
+        draw_stat(d, y, "Clock", f"{now} | {txt_r}", CLR_OK if ok_r else CLR_ERR, 0)
+        if not ok_r:
             errs.append("RTC")
     else:
-        draw_stat(d, y, "Battery", "disabled", CLR_TXT)
+        draw_stat(d, y, "Battery", "disabled", CLR_TXT, 0)
         y += LINE_H
-        draw_stat(d, y, "Clock", "disabled", CLR_TXT)
+        draw_stat(d, y, "Clock", "disabled", CLR_TXT, 0)
 
     footer(d, bool(errs) or ALWAYS_WARN)
     return img, errs
 
-# ───────────────────────────── Main ───────────────────────────────────────
+
+# ─── Main ──────────────────────────────────────────────────────────────────
 def main():
     try:
         img, errs = make_frame()
@@ -334,6 +397,7 @@ def main():
             fn = STATUS / f"preview_{int(time.time())}.png"
             img.save(fn)
             log.info("Preview → %s", fn)
+
         for e in errs:
             log.warning("! %s", e)
     except Exception as exc:
