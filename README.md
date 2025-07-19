@@ -72,22 +72,22 @@ When no hardware is present, each script falls back to headless mode and writes 
 
 ## Usage
 
-- **Display a random XKCD comic:**
+- **Fetch and display a random XKCD comic:**
     ```bash
     python3 ./xkcd.py
     ```
 
-- **Display a NASA image:**
+- **Fetch and display a NASA image:**
     ```bash
     python3 ./nasa.py [--apod|--mars [ROVER]|--epic|--earth LAT LON [--dim]|--search "QUERY"] [--key API_KEY]
     ```
 
-- **Fetch an unseen landscape painting from The Met or AIC:**
+- **Fetch and display an unseen landscape painting:**
     ```bash
     python3 ./landscapes.py [--met|--aic] [--wide|--tall] [--reset]
     ```
 
-- **Download & show an image from a URL, or cycle through saved images:**
+- **Fetch and display an image from a URL, or cycle through saved images:**
     ```bash
     python3 ./save.py [URL] [--folder DIR] [--reset]
     ```
@@ -95,7 +95,7 @@ When no hardware is present, each script falls back to headless mode and writes 
     ```bash
     python3 ./status.py [--force-triangle] [--no-pisugar]
     ```
-*Note: Contrary to indication, the screen will not automatically refresh if this script is manually called, it is mean to be used in conjunction with other scripts + crontab.*
+*Note: Contrary to indication, the screen will not automatically refresh if this script is manually called, it is meant to be used in conjunction with other scripts + crontab.*
 
 ---
 
