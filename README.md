@@ -108,6 +108,7 @@ When no hardware is present, each script falls back to headless mode and writes 
   - InkyPHAT, InkyWHAT
   - Any board auto-detected by `inky.auto()`
 - If your board lacks EEPROM, set `INKY_TYPE` (e.g. `el133uf1`, `phat`, `what`) near the top of each script.
+- If you intend on having the display refresh *on the hour* set your crontab to run ~45 seconds before the hour changes - that offsets the time it takes to fetch, render, push to display, and start the refresh process. 
 
 ---
 
