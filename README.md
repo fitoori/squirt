@@ -114,6 +114,9 @@ When no hardware is present, each script falls back to headless mode and writes 
 
 ## License
 
+If you're from Pimoroni and want to include SQUIRT in your installation examples folder,
+I'll allow it in exchange for some free merch. 
+
 MIT © 2025 github.com/fitoori  
 Contributions welcome!
 
