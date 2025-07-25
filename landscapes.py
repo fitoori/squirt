@@ -26,65 +26,75 @@ static/
 
 Exit codes: 0 success, 1 failure.
 """
-
 from __future__ import annotations
-import argparse, io, json, os, random, re, subprocess, sys, traceback
+
+import argparse
+import io
+import json
+import os
+import random
+import re
+import subprocess
+import sys
+import traceback
 from pathlib import Path
-from typing import Dict, Set, Optional, Callable
+from typing import Callable, Dict, Optional, Set
 
 import certifi
 import requests
 from PIL import Image, UnidentifiedImageError
 
-# ───────────────────────────── Configuration ──────────────────────────────
-ROOT_DIR      = Path(__file__).with_name("static")
-SAVE_DIR      = ROOT_DIR / "landscapes"
+# ─── Config ───────────────────────────────────────────────────────────────
+ROOT_DIR = Path(__file__).with_name("static")
+SAVE_DIR = ROOT_DIR / "landscapes"
 SAVE_DIR.mkdir(parents=True, exist_ok=True)
 
-TIMEOUT       = 15
-RETRIES       = 2
-HEADLESS_RES  = (1600, 1200)
+TIMEOUT = 15
+RETRIES = 2
+HEADLESS_RES = (1600, 1200)
 
-INKY_TYPE     = "el133uf1"     # override if auto-detect fails
-INKY_COLOUR   = None           # for PHAT/WHAT
-MAX_ATTEMPTS  = 30
-REJ_SUFFIX    = ".rej"         # orientation‐reject marker suffix
+INKY_TYPE = "el133uf1"
+INKY_COLOUR: str | None = None
+MAX_ATTEMPTS = 30
+REJ_SUFFIX = ".rej"
 
-# ───────────────────────────── pip helper ─────────────────────────────────
+# ─── Helper: pip install silently ─────────────────────────────────────────
 def _pip_install(*pkgs: str) -> None:
     subprocess.run(
-        [sys.executable, "-m", "pip", "install", "--quiet", "--user",
-         "--break-system-packages", *pkgs],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False
+        [sys.executable, "-m", "pip", "install", "--quiet", "--user", "--break-system-packages", *pkgs],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
 
-# ─────────────────────────── Inky detection ───────────────────────────────
+
+# ─── Inky detection ───────────────────────────────────────────────────────
 def init_inky():
     try:
-        import inky, numpy  # noqa
+        import inky  # noqa: F401
+        import numpy  # noqa: F401
     except ModuleNotFoundError:
-        print("Installing inky + numpy…")
+        print("Installing inky + numpy …")
         _pip_install("inky>=2.1.0", "numpy")
         try:
-            import inky  # noqa
+            import inky  # noqa: F401
         except ModuleNotFoundError:
             pass
 
-    # 1) EEPROM auto-detect
-    try:
+    try:  # EEPROM auto‑detect
         from inky.auto import auto
+
         dev = auto()
         return dev, *dev.resolution
     except Exception:
         pass
 
-    # 2) Manual class map
     class_map = {
-        "el133uf1":      "InkyEL133UF1",    # 13.3″ Spectra-6
-        "spectra13":     "InkyEL133UF1",
-        "impression73":  "InkyImpression73",# 7-colour 7.3″ fallback
-        "phat":          "InkyPHAT",
-        "what":          "InkyWHAT",
+        "el133uf1": "InkyEL133UF1",
+        "spectra13": "InkyEL133UF1",
+        "impression73": "InkyImpression73",
+        "phat": "InkyPHAT",
+        "what": "InkyWHAT",
     }
     key = INKY_TYPE.lower()
     if key not in class_map:
@@ -92,53 +102,62 @@ def init_inky():
         return None, *HEADLESS_RES
 
     try:
-        cls = getattr(__import__("inky", fromlist=[class_map[key]]),
-                      class_map[key])
+        cls = getattr(__import__("inky", fromlist=[class_map[key]]), class_map[key])
         dev = cls(INKY_COLOUR) if key in ("phat", "what") else cls()
         return dev, *dev.resolution
     except Exception as exc:
         print("Inky init failed:", exc, file=sys.stderr)
         return None, *HEADLESS_RES
 
+
 INKY, WIDTH, HEIGHT = init_inky()
 
-# ───────────────────────────── HTTP helpers ───────────────────────────────
+# ─── HTTP helpers ─────────────────────────────────────────────────────────
 SESSION = requests.Session()
-SESSION.headers.update({"User-Agent": "LandscapeFetcher/1.4"})
+SESSION.headers.update({"User-Agent": "LandscapeFetcher/1.5"})
 SESSION.mount("https://", requests.adapters.HTTPAdapter(max_retries=RETRIES))
-SESSION.mount("http://",  requests.adapters.HTTPAdapter(max_retries=RETRIES))
+SESSION.mount("http://", requests.adapters.HTTPAdapter(max_retries=RETRIES))
 API_CALLS = 0
 
+
 def _safe_request(url: str, **kw) -> requests.Response:
-    global API_CALLS; API_CALLS += 1
+    global API_CALLS
+    API_CALLS += 1
     kw.setdefault("timeout", TIMEOUT)
     kw.setdefault("verify", certifi.where())
     r = SESSION.get(url, **kw)
     r.raise_for_status()
     return r
 
+
 def jget(url: str, **params) -> dict:
     return _safe_request(url, params=params).json()
+
 
 def fetch(url: str) -> bytes:
     return _safe_request(url).content
 
-# ────────────────────────── Seen bookkeeping ───────────────────────────────
-_seen_rx = re.compile(r'_(met|aic|cma|mia)_(\d+)\.(jpg|rej)$', re.I)
+
+# ─── Seen bookkeeping ────────────────────────────────────────────────────
+_seen_rx = re.compile(r"_(met|aic|cma|mia)_(\d+)\.(jpg|rej)$", re.I)
+
+
 def _index_seen() -> Dict[str, Set[str]]:
     out: Dict[str, Set[str]] = {}
     for p in SAVE_DIR.iterdir():
-        m = _seen_rx.search(p.name)
-        if m:
+        if m := _seen_rx.search(p.name):
             out.setdefault(m[1].lower(), set()).add(m[2])
     return out
 
+
 SEEN = _index_seen()
+
 
 def seen(grp: str, oid: str) -> bool:
     return oid in SEEN.get(grp, set())
 
-def mark_seen(grp: str, oid: str, good: bool):
+
+def mark_seen(grp: str, oid: str, good: bool) -> None:
     if oid in SEEN.get(grp, set()):
         return
     SEEN.setdefault(grp, set()).add(oid)
@@ -148,13 +167,13 @@ def mark_seen(grp: str, oid: str, good: bool):
         except OSError as e:
             print("WARN: failed writing .rej marker:", e, file=sys.stderr)
 
-# ─────────────────────────── Generic helpers ──────────────────────────────
-slug = lambda s, l=60: re.sub(r"[^A-Za-z0-9]+","_", s)[:l].strip("_").lower() or "untitled"
 
-def save_if_ok(data: bytes, title: str, grp: str,
-               oid: str, want_wide: Optional[bool]) -> Optional[Path]:
-    # Quick JPEG check
-    if not data.startswith(b'\xff\xd8'):
+# ─── Generic helpers ─────────────────────────────────────────────────────
+slug = lambda s, l=60: re.sub(r"[^A-Za-z0-9]+", "_", s)[:l].strip("_").lower() or "untitled"
+
+
+def save_if_ok(data: bytes, title: str, grp: str, oid: str, want_wide: Optional[bool]) -> Optional[Path]:
+    if not data.startswith(b"\xff\xd8"):
         mark_seen(grp, oid, False)
         return None
 
@@ -173,18 +192,23 @@ def save_if_ok(data: bytes, title: str, grp: str,
     mark_seen(grp, oid, False)
     return None
 
-# ────────────────────────── Museum back-ends ───────────────────────────────
+
+# ─── Museum back‑ends (each returns Path) ────────────────────────────────
 def backend(tag: str):
     def wrapper(fn: Callable[[Optional[bool]], Path]):
         fn._tag = tag
         return fn
+
     return wrapper
+
 
 @backend("met")
 def met_random(w: Optional[bool]) -> Path:
     ids = jget(
         "https://collectionapi.metmuseum.org/public/collection/v1/search",
-        q="landscape", medium="Paintings", hasImages="true"
+        q="landscape",
+        medium="Paintings",
+        hasImages="true",
     ).get("objectIDs") or []
     random.shuffle(ids)
 
@@ -199,14 +223,13 @@ def met_random(w: Optional[bool]) -> Path:
             url = obj.get("primaryImage") or obj.get("primaryImageSmall")
             if not url:
                 continue
-            p = save_if_ok(fetch(url), obj.get("title", f"met_{oid}"), "met", str(oid), w)
-            if p:
+            if p := save_if_ok(fetch(url), obj.get("title", f"met_{oid}"), "met", str(oid), w):
                 return p
         except Exception as e:
             print("Met:", e, file=sys.stderr)
         attempts += 1
+    raise RuntimeError("Met: exhausted")
 
-    raise RuntimeError("Met: exhausted all attempts")
 
 @backend("aic")
 def aic_random(w: Optional[bool]) -> Path:
@@ -216,8 +239,10 @@ def aic_random(w: Optional[bool]) -> Path:
         try:
             hits = jget(
                 "https://api.artic.edu/api/v1/artworks/search",
-                q="landscape", fields="id,title,image_id",
-                page=random.randint(1,50), limit=100
+                q="landscape",
+                fields="id,title,image_id",
+                page=random.randint(1, 50),
+                limit=100,
             ).get("data", [])
             random.shuffle(hits)
             for h in hits:
@@ -225,8 +250,7 @@ def aic_random(w: Optional[bool]) -> Path:
                 if not imgid or seen("aic", oid):
                     continue
                 url = f"{base}/{imgid}/full/843,/0/default.jpg"
-                p = save_if_ok(fetch(url), h["title"], "aic", oid, w)
-                if p:
+                if p := save_if_ok(fetch(url), h["title"], "aic", oid, w):
                     return p
                 attempts += 1
                 if attempts >= MAX_ATTEMPTS:
@@ -234,8 +258,8 @@ def aic_random(w: Optional[bool]) -> Path:
         except Exception as e:
             print("AIC:", e, file=sys.stderr)
             attempts += 1
+    raise RuntimeError("AIC: exhausted")
 
-    raise RuntimeError("AIC: exhausted all attempts")
 
 @backend("cma")
 def cma_random(w: Optional[bool]) -> Path:
@@ -244,8 +268,11 @@ def cma_random(w: Optional[bool]) -> Path:
         try:
             hits = jget(
                 "https://openaccess-api.clevelandart.org/api/artworks",
-                q="landscape", type="Painting", has_image=1,
-                limit=100, skip=random.randint(0, 5000)
+                q="landscape",
+                type="Painting",
+                has_image=1,
+                limit=100,
+                skip=random.randint(0, 5000),
             ).get("data", [])
             random.shuffle(hits)
             for h in hits:
@@ -253,11 +280,9 @@ def cma_random(w: Optional[bool]) -> Path:
                 if seen("cma", oid):
                     continue
                 img = h.get("images", {}).get("web", {}).get("url")
-                title = h.get("title", "untitled")
                 if not img:
                     continue
-                p = save_if_ok(fetch(img), title, "cma", oid, w)
-                if p:
+                if p := save_if_ok(fetch(img), h.get("title", "untitled"), "cma", oid, w):
                     return p
                 attempts += 1
                 if attempts >= MAX_ATTEMPTS:
@@ -265,8 +290,8 @@ def cma_random(w: Optional[bool]) -> Path:
         except Exception as e:
             print("CMA:", e, file=sys.stderr)
             attempts += 1
+    raise RuntimeError("CMA: exhausted")
 
-    raise RuntimeError("CMA: exhausted all attempts")
 
 @backend("mia")
 def mia_random(w: Optional[bool]) -> Path:
@@ -276,8 +301,10 @@ def mia_random(w: Optional[bool]) -> Path:
             offset = random.randint(0, 5000)
             hits = jget(
                 "https://api.artsmia.org/objects",
-                query="landscape painting", has_images=1,
-                size=100, from_=offset
+                query="landscape painting",
+                has_images=1,
+                size=100,
+                from_=offset,
             ).get("records", [])
             random.shuffle(hits)
             for h in hits:
@@ -285,11 +312,9 @@ def mia_random(w: Optional[bool]) -> Path:
                 if seen("mia", oid):
                     continue
                 img = h.get("primaryimageurl")
-                title = h.get("title", "untitled")
                 if not img:
                     continue
-                p = save_if_ok(fetch(img), title, "mia", oid, w)
-                if p:
+                if p := save_if_ok(fetch(img), h.get("title", "untitled"), "mia", oid, w):
                     return p
                 attempts += 1
                 if attempts >= MAX_ATTEMPTS:
@@ -297,44 +322,45 @@ def mia_random(w: Optional[bool]) -> Path:
         except Exception as e:
             print("MIA:", e, file=sys.stderr)
             attempts += 1
+    raise RuntimeError("MIA: exhausted")
 
-    raise RuntimeError("MIA: exhausted all attempts")
 
-# Map tag → function
-BACKENDS: Dict[str, Callable[[Optional[bool]], Path]] = {
-    fn._tag: fn for fn in (met_random, aic_random, cma_random, mia_random)
-}
+BACKENDS: Dict[str, Callable[[Optional[bool]], Path]] = {fn._tag: fn for fn in (met_random, aic_random, cma_random, mia_random)}
 
-# ────────────────────────── Imaging helpers ───────────────────────────────
+# ─── Imaging helpers ──────────────────────────────────────────────────────
 def scale_cover(img: Image.Image) -> Image.Image:
     s = max(WIDTH / img.width, HEIGHT / img.height)
     n = img.resize((round(img.width * s), round(img.height * s)), Image.LANCZOS)
-    l = (n.width - WIDTH) // 2; t = (n.height - HEIGHT) // 2
+    l = (n.width - WIDTH) // 2
+    t = (n.height - HEIGHT) // 2
     return n.crop((l, t, l + WIDTH, t + HEIGHT))
 
-def scale_fit(img: Image.Image) -> Image.Image:
+
+def scale_fit(img: Image.Image, bg: str) -> Image.Image:
     s = min(WIDTH / img.width, HEIGHT / img.height)
     n = img.resize((round(img.width * s), round(img.height * s)), Image.LANCZOS)
-    bg = Image.new("RGB", (WIDTH, HEIGHT), "white")
-    bg.paste(n, ((WIDTH - n.width) // 2, (HEIGHT - n.height) // 2))
-    return bg
+    canvas = Image.new("RGB", (WIDTH, HEIGHT), bg)
+    canvas.paste(n, ((WIDTH - n.width) // 2, (HEIGHT - n.height) // 2))
+    return canvas
 
-def display(path: Path, mode: str):
+
+def display(path: Path, mode: str, bg: str) -> None:
     with Image.open(path) as raw:
-        frame = scale_cover(raw) if mode == "fill" else scale_fit(raw)
+        frame = scale_cover(raw) if mode == "fill" else scale_fit(raw, bg)
         if INKY:
             INKY.set_image(frame)
             INKY.show()
         else:
             preview = path.with_suffix(f".{mode}.preview.png")
             frame.save(preview)
-            print("Headless preview →", preview)
+            print("Preview →", preview)
 
-# ────────────────────────── Offline fallback ──────────────────────────────
+
+# ─── Offline fallback ────────────────────────────────────────────────────
 def local_cycle(w: Optional[bool]) -> Path:
     files = sorted(SAVE_DIR.glob("*.jpg"), key=lambda p: p.stat().st_atime)
     if not files:
-        raise RuntimeError("No local images for offline mode")
+        raise RuntimeError("No local images")
     for p in files:
         try:
             with Image.open(p) as im:
@@ -343,53 +369,56 @@ def local_cycle(w: Optional[bool]) -> Path:
                     return p
         except Exception:
             pass
-    raise RuntimeError("Offline: no orientation match")
+    raise RuntimeError("Offline: orientation mismatch")
 
-# ───────────────────────────── CLI & main ────────────────────────────────
+
+# ─── CLI / main ───────────────────────────────────────────────────────────
 def parse_args():
-    p = argparse.ArgumentParser(description="Landscape painting fetcher/cycler")
+    p = argparse.ArgumentParser(description="Fetch or cycle landscape paintings")
     src = p.add_mutually_exclusive_group()
     for tag in BACKENDS:
-        src.add_argument(f"--{tag}", action="store_true",
-                         help=f"only {tag.upper()}")
+        src.add_argument(f"--{tag}", action="store_true", help=f"only {tag.upper()}")
+
     ori = p.add_mutually_exclusive_group()
-    ori.add_argument("--wide", action="store_true", help="landscape only (w ≥ h)")
-    ori.add_argument("--tall", action="store_true", help="portrait only (h > w)")
-    p.add_argument("--mode", choices=("fill", "fit"), default="fit",
-                   help="fill (crop) or fit (letter-box)")
+    ori.add_argument("--wide", action="store_true", help="only landscape orientation")
+    ori.add_argument("--tall", action="store_true", help="only portrait orientation")
+
+    p.add_argument("--mode", choices=("fill", "fit"), default="fit", help="fill=crop, fit=letterbox")
+    p.add_argument("--white", action="store_true", help="use white matte instead of black")
+
     return p.parse_args()
+
 
 def main():
     args = parse_args()
     want = True if args.wide else False if args.tall else None
+    bg_colour = "white" if args.white else "black"
 
-    # pick backends
-    selected = [t for t in BACKENDS if getattr(args, t)]
-    backends = [BACKENDS[t] for t in selected] if selected else list(BACKENDS.values())
-    random.shuffle(backends)
+    chosen = [BACKENDS[t] for t in BACKENDS if getattr(args, t)] or list(BACKENDS.values())
+    random.shuffle(chosen)
 
-    # try each
-    for be in backends:
+    for be in chosen:
         try:
             pic = be(want)
-            display(pic, args.mode)
+            display(pic, args.mode, bg_colour)
             print(f"Saved → {pic}")
-            print(f"HTTP requests this run: {API_CALLS}")
+            print(f"HTTP requests: {API_CALLS}")
             return
         except Exception as e:
             print(f"[{be.__name__}] {e}", file=sys.stderr)
 
-    # fallback to local files
     try:
         pic = local_cycle(want)
-        display(pic, args.mode)
-        print(f"(offline) Displayed → {pic}")
+        display(pic, args.mode, bg_colour)
+        print(f"(offline) {pic}")
     except Exception as e:
         traceback.print_exc()
         sys.exit(f"Offline fallback failed: {e}")
+
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
         sys.exit(1)
+
