@@ -1,67 +1,75 @@
 #!/usr/bin/env python3
 """
-xkcd.py — fetch a random XKCD comic and display it on an Inky panel
-(13.3″ Spectra‑6, other Impressions, pHAT, wHAT …) or save a PNG preview
-when no hardware is present.
+xkcd.py — fetch a random XKCD comic and display it on an Inky e‑paper panel
+(tested on 13.3″ Spectra‑6 Impression).
 
-v1.1
-• On failure (no network, bad download, etc.): displays a previously cached
-  comic picked at random.
+v1.9
+• Adds seen.json: offline mode shows every cached comic once before repeats.
+• Keeps atomic downloads, bounded cache, zero BeautifulSoup dependency.
 
-Folders
--------
-static/
-└── xkcd/                ← comics and optional previews
-
+Folder layout
+└─ static/
+   └─ xkcd/          ← comics, previews, seen.json
 """
 
 from __future__ import annotations
-import os, sys, subprocess, requests, random
-from pathlib import Path
-from urllib.parse import urljoin, urlparse
-from bs4 import BeautifulSoup
-from PIL import Image, UnidentifiedImageError, ImageFile
 
-# ───────────────────────── Configuration ──────────────────────────
-REMOTE_URL   = "https://c.xkcd.com/random/comic/"
-ROOT_DIR     = Path(__file__).with_name("static")
-SAVE_DIR     = ROOT_DIR / "xkcd"
-TIMEOUT      = 10
-RETRIES      = 2
-# Manual override when auto-detect fails and EEPROM is blank:
-INKY_TYPE    = "el133uf1"          # "el133uf1" | "phat" | "what" | ""
-INKY_COLOUR  = None                # for pHAT / wHAT
-HEADLESS_RES = (1600, 1200)        # matches 13.3″ panel
-# ──────────────────────────────────────────────────────────────────
+import json
+import os
+import random
+import re
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+from typing import List, Set, Tuple
+from urllib.parse import urljoin, urlparse
+
+import certifi
+import requests
+from PIL import Image, ImageFile, UnidentifiedImageError
+
+# ─── Config ──────────────────────────────────────────────────────────────
+REMOTE_URL = "https://c.xkcd.com/random/comic/"
+ROOT_DIR = Path(__file__).with_name("static")
+SAVE_DIR = ROOT_DIR / "xkcd"
+SEEN_FILE = SAVE_DIR / "seen.json"
+CACHE_MAX = 500                     # 0 → unlimited
+TIMEOUT, RETRIES = 10, 2
+
+INKY_TYPE = "el133uf1"
+INKY_COLOUR: str | None = None
+HEADLESS_RES: Tuple[int, int] = (1600, 1200)
 
 SAVE_DIR.mkdir(parents=True, exist_ok=True)
-ImageFile.LOAD_TRUNCATED_IMAGES = True          # tolerate partial files
+ImageFile.LOAD_TRUNCATED_IMAGES = True
+Image.MAX_IMAGE_PIXELS = 40_000_000  # ~4 k × 10 k
 
-# — pip helper —
+# ─── Lightweight pip helper ──────────────────────────────────────────────
 def _pip_install(*pkgs: str) -> None:
     subprocess.run(
-        [sys.executable, "-m", "pip", "install", "--quiet", "--user",
-         "--break-system-packages", *pkgs],
+        [sys.executable, "-m", "pip", "install", "--quiet", "--user", "--break-system-packages", *pkgs],
         check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
 
-# — Inky initialisation —
-def init_inky():
-    """
-    Returns (dev_or_None, WIDTH, HEIGHT).
-    Uses inky.auto when possible, else falls back to a manual class map.
-    """
-    try:
-        import inky, numpy  # noqa
-    except ModuleNotFoundError:
-        print("Installing inky & numpy …")
-        _pip_install("inky>=2.1.0", "numpy")
+for _mod, _pkg in (("requests", "requests"), ("PIL", "pillow")):
+    if _mod not in sys.modules:
         try:
-            import inky  # noqa
+            __import__(_mod)
         except ModuleNotFoundError:
-            pass
+            print(f"Installing {_pkg} …")
+            _pip_install(_pkg)
 
-    # 1) EEPROM-driven auto-detect (works on modern HATs)
+# ─── Inky initialisation ────────────────────────────────────────────────
+def init_inky():
+    try:
+        import inky, numpy  # noqa: F401
+    except ModuleNotFoundError:
+        print("Installing inky + numpy …")
+        _pip_install("inky>=2.1.0", "numpy")
+
     try:
         from inky.auto import auto
         dev = auto()
@@ -69,112 +77,162 @@ def init_inky():
     except Exception:
         pass
 
-    # 2) Manual class map for older / EEPROM-less boards
-    class_map = {
-        "el133uf1":  "InkyEL133UF1",   # 13.3″ Spectra-6 Impression
-        "spectra13":"InkyEL133UF1",    # synonym for legacy scripts
-        "impression13":"InkyEL133UF1",
-        "phat":      "InkyPHAT",
-        "what":      "InkyWHAT",
+    cls_map = {
+        "el133uf1": "InkyEL133UF1",
+        "spectra13": "InkyEL133UF1",
+        "impression13": "InkyEL133UF1",
+        "phat": "InkyPHAT",
+        "what": "InkyWHAT",
     }
     key = INKY_TYPE.lower()
-    if key not in class_map:
-        print("No Inky board detected and INKY_TYPE is unset — headless mode.")
+    if key not in cls_map:
+        print("Headless mode (no Inky detected).")
+        return None, *HEADLESS_RES
+    try:
+        cls = getattr(__import__("inky", fromlist=[cls_map[key]]), cls_map[key])
+        dev = cls(INKY_COLOUR) if key in ("phat", "what") else cls()
+        return dev, *dev.resolution
+    except Exception as err:
+        print("Inky init failed:", err, file=sys.stderr)
         return None, *HEADLESS_RES
 
-    try:
-        board_cls = getattr(__import__("inky", fromlist=[class_map[key]]),
-                            class_map[key])
-        dev = board_cls(INKY_COLOUR) if key in ("phat", "what") else board_cls()
-        return dev, *dev.resolution
-    except Exception as e:
-        print("Inky unavailable → headless mode:", e, file=sys.stderr)
-        return None, *HEADLESS_RES
 
 INKY, WIDTH, HEIGHT = init_inky()
 
-# — HTTP helpers —
+# ─── HTTP session ────────────────────────────────────────────────────────
 SESSION = requests.Session()
-SESSION.mount("https://", requests.adapters.HTTPAdapter(max_retries=RETRIES))
-SESSION.mount("http://",  requests.adapters.HTTPAdapter(max_retries=RETRIES))
+SESSION.headers.update({"User-Agent": "XKCDFetcher/1.9"})
+adapter = requests.adapters.HTTPAdapter(max_retries=RETRIES)
+SESSION.mount("https://", adapter)
+SESSION.mount("http://", adapter)
 
-def download(url: str, dest: Path) -> Path:
-    if dest.exists():
-        return dest
-    with SESSION.get(url, stream=True, timeout=TIMEOUT) as r:
+# ─── Seen bookkeeping ────────────────────────────────────────────────────
+def load_seen() -> Set[str]:
+    try:
+        data = json.loads(SEEN_FILE.read_text())
+        return set(data) if isinstance(data, list) else set()
+    except Exception:
+        return set()
+
+
+def save_seen(seen: Set[str]) -> None:
+    try:
+        SEEN_FILE.write_text(json.dumps(sorted(seen)))
+    except Exception as e:
+        print("WARN: could not write seen.json:", e, file=sys.stderr)
+
+
+SEEN: Set[str] = load_seen()
+
+# ─── Cache utilities ─────────────────────────────────────────────────────
+def prune_cache(limit: int = CACHE_MAX) -> None:
+    """Delete oldest files beyond `limit` and purge dangling entries in SEEN."""
+    if limit <= 0:
+        return
+    files = sorted(SAVE_DIR.glob("*"), key=lambda p: p.stat().st_mtime)
+    keep_names = {p.name for p in files[-limit:]}
+    # remove excess
+    for p in files[:-limit]:
+        p.unlink(missing_ok=True)
+    # clean SEEN
+    removed = {name for name in SEEN if name not in keep_names}
+    if removed:
+        SEEN.difference_update(removed)
+        save_seen(SEEN)
+
+# ─── Download helpers ────────────────────────────────────────────────────
+def _download(url: str, dest: Path) -> Path:
+    part = dest.with_suffix(dest.suffix + ".part")
+    with SESSION.get(url, stream=True, timeout=TIMEOUT, verify=certifi.where()) as r:
         r.raise_for_status()
-        with dest.open("wb") as fp:
+        with part.open("wb") as fh:
             for chunk in r.iter_content(8192):
-                fp.write(chunk)
+                fh.write(chunk)
+    part.replace(dest)
     return dest
 
-# — Image helper (letter-box fit) —
-def fit_image(img: Image.Image,
-              upscale: bool = True,
-              bg=(255, 255, 255)) -> Image.Image:
-    img = img.convert("RGB")
-    scale = min(WIDTH / img.width, HEIGHT / img.height)
-    if scale < 1 or (scale > 1 and upscale):
-        img = img.resize((round(img.width*scale), round(img.height*scale)),
-                         Image.LANCZOS)
+# ─── Core functions ──────────────────────────────────────────────────────
+IMG_RX = re.compile(r'<div id="comic">.*?<img[^>]+src="([^"]+)"', re.S)
+
+def fetch_xkcd() -> Path:
+    html = SESSION.get(REMOTE_URL, timeout=TIMEOUT).text
+    m = IMG_RX.search(html)
+    if not m:
+        raise RuntimeError("No <img> tag found")
+    src = urljoin(REMOTE_URL, m.group(1))
+    fname = os.path.basename(urlparse(src).path) or "comic.png"
+    if not fname.lower().endswith((".png", ".jpg", ".jpeg", ".gif")):
+        fname += ".png"
+    return _download(src, SAVE_DIR / fname)
+
+def random_cached() -> Path:
+    imgs: List[Path] = [
+        p for p in SAVE_DIR.iterdir() if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".gif")
+    ]
+    if not imgs:
+        raise RuntimeError("Cache empty")
+    unseen = [p for p in imgs if p.name not in SEEN]
+    pool = unseen or imgs  # reset if all seen
+    if not unseen:
+        SEEN.clear()
+    return random.choice(pool)
+
+# ─── Imaging helpers ─────────────────────────────────────────────────────
+def fit_image(im: Image.Image, bg: Tuple[int, int, int]) -> Image.Image:
+    im = im.convert("RGB")
+    scale = min(WIDTH / im.width, HEIGHT / im.height)
+    if scale != 1:
+        im = im.resize((round(im.width * scale), round(im.height * scale)), Image.LANCZOS)
     canvas = Image.new("RGB", (WIDTH, HEIGHT), bg)
-    canvas.paste(img, ((WIDTH - img.width)//2, (HEIGHT - img.height)//2))
+    canvas.paste(im, ((WIDTH - im.width) // 2, (HEIGHT - im.height) // 2))
     return canvas
 
-# — Core —
-def fetch_xkcd() -> Path:
-    """Download a fresh random XKCD and return its cached Path."""
-    try:
-        html = SESSION.get(REMOTE_URL, timeout=TIMEOUT).text
-        tag  = BeautifulSoup(html, "html.parser").select_one("div#comic img")
-        if not tag or not tag.get("src"):
-            raise RuntimeError("XKCD page contained no <img>")
-        img_url = urljoin(REMOTE_URL, tag["src"])
-        fname   = os.path.basename(urlparse(img_url).path) or "comic.png"
-        if not fname.lower().endswith((".png", ".jpg", ".jpeg", ".gif")):
-            fname += ".png"
-        return download(img_url, SAVE_DIR / fname)
-    except (requests.RequestException, RuntimeError) as exc:
-        raise RuntimeError(f"online fetch failed: {exc}") from exc
-
-def random_cached_comic() -> Path:
-    """Return a random image from SAVE_DIR (raises if none found)."""
-    files = [p for p in SAVE_DIR.iterdir()
-             if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".gif")]
-    if not files:
-        raise RuntimeError("No cached comics available for offline fallback")
-    return random.choice(files)
-
-def display(path: Path):
+def display(path: Path, matte_bg: Tuple[int, int, int]) -> None:
     with Image.open(path) as raw:
-        frame = fit_image(raw)
+        frame = fit_image(raw, matte_bg)
         if INKY:
             INKY.set_image(frame)
             INKY.show()
         else:
-            preview = path.with_name(path.stem + "_preview.png")
-            frame.save(preview)
-            print("Headless preview →", preview)
+            prev = path.with_name(path.stem + "_preview.png")
+            frame.save(prev)
+            print("Preview →", prev)
 
-# — Main —
-def main():
+# ─── CLI ────────────────────────────────────────────────────────────────
+def parse_args():
+    import argparse
+
+    p = argparse.ArgumentParser(description="Fetch / display a random XKCD comic")
+    col = p.add_mutually_exclusive_group()
+    col.add_argument("--white", action="store_true", help="white matte (default)")
+    col.add_argument("--black", action="store_true", help="black matte")
+    return p.parse_args()
+
+# ─── Main ────────────────────────────────────────────────────────────────
+def main() -> None:
+    args = parse_args()
+    bg_colour = (0, 0, 0) if args.black else (255, 255, 255)
+
     try:
         comic = fetch_xkcd()
-        source = "online"
-    except Exception as err:
-        print(f"WARNING: {err}", file=sys.stderr)
+        src = "online"
+    except Exception as e:
+        print("WARNING:", e, file=sys.stderr)
         try:
-            comic = random_cached_comic()
-            source = "offline cache"
-        except Exception as inner:
-            print("ERROR:", inner, file=sys.stderr)
+            comic = random_cached()
+            src = "offline cache"
+        except Exception as e2:
+            print("ERROR:", e2, file=sys.stderr)
             sys.exit(1)
 
     try:
-        display(comic)
-        print(f"Displayed ({source}) → {comic}")
-    except (UnidentifiedImageError, OSError) as disp_err:
-        print("ERROR: display failed:", disp_err, file=sys.stderr)
+        display(comic, bg_colour)
+        SEEN.add(comic.name)
+        save_seen(SEEN)
+        prune_cache()
+        print(f"Displayed ({src}) → {comic}")
+    except (UnidentifiedImageError, OSError) as e:
+        print("ERROR: display failed:", e, file=sys.stderr)
         sys.exit(1)
 
 if __name__ == "__main__":
