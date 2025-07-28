@@ -3,8 +3,7 @@ _Spectra-Qualified Uncomplicated Inky Rendering Tools_
 
 A set of one-shot Python 3 scripts for Raspberry Pi (or any Linux SBC)  
 that displays content on an Inky e-paper panel  
-(13.3″ Spectra-6 Impression, 7-colour Impression 7.3″, PHAT, WHAT, or any board detected by `inky.auto`).  
-When no hardware is present, each script falls back to headless mode and writes a `*_preview.png`.
+(13.3″ Spectra-6 Impression, 7-colour Impression 7.3″, pHAT, wHAT, or any board detected by `inky.auto`).
 
 ---
 
@@ -18,6 +17,9 @@ When no hardware is present, each script falls back to headless mode and writes 
   Generates a `*_preview.png` when no Inky hardware is found.
 - **Consistent helpers**  
   Shared functions for HTTP, image-fitting, Inky detection, and CLI parsing.
+- **Self-Growing Offline Functionality**
+  All fetched images are archived.
+  If the scripts are called without an internet connection, they cycle saved content. 
 
 ---
 
@@ -64,7 +66,7 @@ When no hardware is present, each script falls back to headless mode and writes 
     Scroll down to the bottom, paste in the following:
     ```bash
     0 * * * * python3 /home/$USER/squirt/xkcd.py
-    @reboot sleep 10 && python3 /home/$USER/squirt/status.py && sleep 30 && python3 /home/$USER/squirt/nasa.py --apod &
+    @reboot python3 /home/$USER/squirt/status.py && sleep 30 && python3 /home/$USER/squirt/nasa.py --apod &
     ```
     *The first line will refresh the display once per hour to a display a new xkcd comic. The second line runs status.py message on boot, leaves it for ~30 seconds, then switches to showing NASA's Astronomy Photo of the Day (apod).*
 
@@ -79,12 +81,12 @@ When no hardware is present, each script falls back to headless mode and writes 
 
 - **Fetch and display a NASA image:**
     ```bash
-    python3 ./nasa.py [--apod|--mars [ROVER]|--epic|--earth LAT LON [--dim]|--search "QUERY"] [--key API_KEY]
+    python3 ./nasa.py [--apod|--mars [ROVER]|--epic|--earth LAT LON [--dim]|--search "QUERY"] [--key API_KEY] [--landscape|--portrait]
     ```
 
 - **Fetch and display an unseen landscape painting:**
     ```bash
-    python3 ./landscapes.py [--met|--aic] [--wide|--tall] [--reset]
+    python3 ./landscapes.py [--met|--aic|--cma] [--wide|--tall] [--reset]
     ```
 
 - **Fetch and display an image from a URL, or cycle through saved images:**
@@ -115,7 +117,7 @@ When no hardware is present, each script falls back to headless mode and writes 
 ## License
 
 If you're from Pimoroni and want to include SQUIRT in your installation examples folder,
-I'll allow it in exchange for some free merch. 
+I'll allow it in exchange for some free merch ;)
 
 MIT © 2025 github.com/fitoori  
 Contributions welcome!
