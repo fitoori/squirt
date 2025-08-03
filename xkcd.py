@@ -3,24 +3,35 @@
 xkcd.py — fetch a random XKCD comic and display it on an Inky e‑paper panel
 (tested on 13.3″ Spectra‑6 Impression).
 
-v1.9
-• Adds seen.json: offline mode shows every cached comic once before repeats.
-• Keeps atomic downloads, bounded cache, zero BeautifulSoup dependency.
+v2.0
+• Orientation filter: huge vertical strips or cinema‑wide comics are cached
+  but auto‑skipped (<9:16 or >3:1 on landscape panels; inverse on portrait).
+
+• Cached comics that don’t meet the current orientation tolerance are skipped and not displayed. 
+  They remain in the cache and can be shown later if the panel orientation (or thresholds) change. 
+  Only displayed comics are added to seen.json.
+
+• --landscape / --portrait flags override auto-detected panel orientation. 
+
+unchanged from v1.9:
+• seen.json: offline mode shows every cached comic once before repeats.
+• atomic downloads, bounded cache, zero BeautifulSoup dependency.
+• White matte remains default; use --black for dark letter‑boxing.
 
 Folder layout
 └─ static/
-   └─ xkcd/          ← comics, previews, seen.json
+   └─ xkcd/          comics, previews and seen.json
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import random
 import re
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 from typing import List, Set, Tuple
 from urllib.parse import urljoin, urlparse
@@ -29,13 +40,20 @@ import certifi
 import requests
 from PIL import Image, ImageFile, UnidentifiedImageError
 
-# ─── Config ──────────────────────────────────────────────────────────────
+# ─── Tunables & constants ────────────────────────────────────────────────
 REMOTE_URL = "https://c.xkcd.com/random/comic/"
 ROOT_DIR = Path(__file__).with_name("static")
 SAVE_DIR = ROOT_DIR / "xkcd"
 SEEN_FILE = SAVE_DIR / "seen.json"
-CACHE_MAX = 500                     # 0 → unlimited
-TIMEOUT, RETRIES = 10, 2
+
+TIMEOUT = 10
+RETRIES = 2
+CACHE_MAX = 500
+MAX_FETCH_ATTEMPTS = 10             # max fresh downloads tried per run
+
+# Aspect‑ratio limits (landscape panel). In portrait they’re inverted.
+MIN_RATIO = 9 / 16                  # 0.562 → anything narrower is “too tall”
+MAX_RATIO = 3.0                     # anything wider than 3:1 skipped
 
 INKY_TYPE = "el133uf1"
 INKY_COLOUR: str | None = None
@@ -43,9 +61,9 @@ HEADLESS_RES: Tuple[int, int] = (1600, 1200)
 
 SAVE_DIR.mkdir(parents=True, exist_ok=True)
 ImageFile.LOAD_TRUNCATED_IMAGES = True
-Image.MAX_IMAGE_PIXELS = 40_000_000  # ~4 k × 10 k
+Image.MAX_IMAGE_PIXELS = 40_000_000
 
-# ─── Lightweight pip helper ──────────────────────────────────────────────
+# ─── Minimal pip helper ──────────────────────────────────────────────────
 def _pip_install(*pkgs: str) -> None:
     subprocess.run(
         [sys.executable, "-m", "pip", "install", "--quiet", "--user", "--break-system-packages", *pkgs],
@@ -54,13 +72,12 @@ def _pip_install(*pkgs: str) -> None:
         stderr=subprocess.DEVNULL,
     )
 
-for _mod, _pkg in (("requests", "requests"), ("PIL", "pillow")):
-    if _mod not in sys.modules:
-        try:
-            __import__(_mod)
-        except ModuleNotFoundError:
-            print(f"Installing {_pkg} …")
-            _pip_install(_pkg)
+for mod, pkg in (("requests", "requests"), ("PIL", "pillow")):
+    try:
+        __import__(mod)
+    except ModuleNotFoundError:
+        print(f"Installing {pkg} …")
+        _pip_install(pkg)
 
 # ─── Inky initialisation ────────────────────────────────────────────────
 def init_inky():
@@ -96,12 +113,11 @@ def init_inky():
         print("Inky init failed:", err, file=sys.stderr)
         return None, *HEADLESS_RES
 
-
 INKY, WIDTH, HEIGHT = init_inky()
 
 # ─── HTTP session ────────────────────────────────────────────────────────
 SESSION = requests.Session()
-SESSION.headers.update({"User-Agent": "XKCDFetcher/1.9"})
+SESSION.headers.update({"User-Agent": "XKCDFetcher/2.0"})
 adapter = requests.adapters.HTTPAdapter(max_retries=RETRIES)
 SESSION.mount("https://", adapter)
 SESSION.mount("http://", adapter)
@@ -114,47 +130,50 @@ def load_seen() -> Set[str]:
     except Exception:
         return set()
 
-
 def save_seen(seen: Set[str]) -> None:
     try:
         SEEN_FILE.write_text(json.dumps(sorted(seen)))
     except Exception as e:
         print("WARN: could not write seen.json:", e, file=sys.stderr)
 
-
 SEEN: Set[str] = load_seen()
 
-# ─── Cache utilities ─────────────────────────────────────────────────────
+# ─── Cache management ───────────────────────────────────────────────────
 def prune_cache(limit: int = CACHE_MAX) -> None:
-    """Delete oldest files beyond `limit` and purge dangling entries in SEEN."""
     if limit <= 0:
         return
     files = sorted(SAVE_DIR.glob("*"), key=lambda p: p.stat().st_mtime)
-    keep_names = {p.name for p in files[-limit:]}
-    # remove excess
+    keep = {p.name for p in files[-limit:]}
     for p in files[:-limit]:
         p.unlink(missing_ok=True)
-    # clean SEEN
-    removed = {name for name in SEEN if name not in keep_names}
-    if removed:
-        SEEN.difference_update(removed)
+    dropped = {n for n in SEEN if n not in keep}
+    if dropped:
+        SEEN.difference_update(dropped)
         save_seen(SEEN)
+
+# ─── Aspect‑ratio helper ────────────────────────────────────────────────
+def acceptable(w: int, h: int, panel_landscape: bool) -> bool:
+    aspect = w / h
+    if panel_landscape:
+        return MIN_RATIO <= aspect <= MAX_RATIO
+    # portrait panel → invert logic
+    return 1 / MAX_RATIO <= aspect <= 1 / MIN_RATIO
 
 # ─── Download helpers ────────────────────────────────────────────────────
 def _download(url: str, dest: Path) -> Path:
-    part = dest.with_suffix(dest.suffix + ".part")
+    tmp = dest.with_suffix(dest.suffix + ".part")
     with SESSION.get(url, stream=True, timeout=TIMEOUT, verify=certifi.where()) as r:
         r.raise_for_status()
-        with part.open("wb") as fh:
+        with tmp.open("wb") as fh:
             for chunk in r.iter_content(8192):
                 fh.write(chunk)
-    part.replace(dest)
+    tmp.replace(dest)
     return dest
 
-# ─── Core functions ──────────────────────────────────────────────────────
+# ─── Core: online & offline fetchers ─────────────────────────────────────
 IMG_RX = re.compile(r'<div id="comic">.*?<img[^>]+src="([^"]+)"', re.S)
 
-def fetch_xkcd() -> Path:
+def fetch_one_xkcd() -> Path:
     html = SESSION.get(REMOTE_URL, timeout=TIMEOUT).text
     m = IMG_RX.search(html)
     if not m:
@@ -165,19 +184,47 @@ def fetch_xkcd() -> Path:
         fname += ".png"
     return _download(src, SAVE_DIR / fname)
 
-def random_cached() -> Path:
-    imgs: List[Path] = [
-        p for p in SAVE_DIR.iterdir() if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".gif")
-    ]
+def fetch_xkcd(panel_landscape: bool) -> Path:
+    for attempt in range(1, MAX_FETCH_ATTEMPTS + 1):
+        p = fetch_one_xkcd()
+        try:
+            with Image.open(p) as im:
+                if acceptable(im.width, im.height, panel_landscape):
+                    return p
+        except Exception:
+            pass  # corrupt download? keep and continue
+        print(f"Skipped unsuitable orientation ({attempt}/{MAX_FETCH_ATTEMPTS}) → {p.name}",
+              file=sys.stderr)
+    raise RuntimeError("No suitable comic found after multiple attempts")
+
+def random_cached(panel_landscape: bool) -> Path:
+    imgs: List[Path] = [p for p in SAVE_DIR.iterdir()
+                        if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".gif")]
     if not imgs:
         raise RuntimeError("Cache empty")
-    unseen = [p for p in imgs if p.name not in SEEN]
-    pool = unseen or imgs  # reset if all seen
-    if not unseen:
-        SEEN.clear()
-    return random.choice(pool)
+    # Prefer unseen + acceptable
+    random.shuffle(imgs)
+    for p in imgs:
+        if p.name in SEEN:
+            continue
+        try:
+            with Image.open(p) as im:
+                if acceptable(im.width, im.height, panel_landscape):
+                    return p
+        except Exception:
+            continue
+    # fallback: any acceptable, even if seen
+    for p in imgs:
+        try:
+            with Image.open(p) as im:
+                if acceptable(im.width, im.height, panel_landscape):
+                    SEEN.discard(p.name)  # reset rotation cycle
+                    return p
+        except Exception:
+            continue
+    raise RuntimeError("No cached comic matches panel orientation")
 
-# ─── Imaging helpers ─────────────────────────────────────────────────────
+# ─── Imaging & display ──────────────────────────────────────────────────
 def fit_image(im: Image.Image, bg: Tuple[int, int, int]) -> Image.Image:
     im = im.convert("RGB")
     scale = min(WIDTH / im.width, HEIGHT / im.height)
@@ -187,9 +234,9 @@ def fit_image(im: Image.Image, bg: Tuple[int, int, int]) -> Image.Image:
     canvas.paste(im, ((WIDTH - im.width) // 2, (HEIGHT - im.height) // 2))
     return canvas
 
-def display(path: Path, matte_bg: Tuple[int, int, int]) -> None:
+def display(path: Path, bg: Tuple[int, int, int]) -> None:
     with Image.open(path) as raw:
-        frame = fit_image(raw, matte_bg)
+        frame = fit_image(raw, bg)
         if INKY:
             INKY.set_image(frame)
             INKY.show()
@@ -199,27 +246,29 @@ def display(path: Path, matte_bg: Tuple[int, int, int]) -> None:
             print("Preview →", prev)
 
 # ─── CLI ────────────────────────────────────────────────────────────────
-def parse_args():
-    import argparse
-
+def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Fetch / display a random XKCD comic")
-    col = p.add_mutually_exclusive_group()
-    col.add_argument("--white", action="store_true", help="white matte (default)")
-    col.add_argument("--black", action="store_true", help="black matte")
+    matte = p.add_mutually_exclusive_group()
+    matte.add_argument("--white", action="store_true", help="white matte (default)")
+    matte.add_argument("--black", action="store_true", help="black matte")
+    orient = p.add_mutually_exclusive_group()
+    orient.add_argument("--landscape", action="store_true", help="force landscape panel")
+    orient.add_argument("--portrait", action="store_true", help="force portrait panel")
     return p.parse_args()
 
-# ─── Main ────────────────────────────────────────────────────────────────
+# ─── Main ───────────────────────────────────────────────────────────────
 def main() -> None:
     args = parse_args()
     bg_colour = (0, 0, 0) if args.black else (255, 255, 255)
+    panel_landscape = args.landscape or (not args.portrait and WIDTH >= HEIGHT)
 
     try:
-        comic = fetch_xkcd()
+        comic = fetch_xkcd(panel_landscape)
         src = "online"
     except Exception as e:
         print("WARNING:", e, file=sys.stderr)
         try:
-            comic = random_cached()
+            comic = random_cached(panel_landscape)
             src = "offline cache"
         except Exception as e2:
             print("ERROR:", e2, file=sys.stderr)
