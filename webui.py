@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+# =============================================================================
+# SQUIRT WEB UI — Responsive SYNC + BROWSER (hardened, refined)
+# All tunables, paths, and flags are DEFINED UP FRONT here.
+# =============================================================================
+
+import sys
+import json
+import logging
+import os
+import re
+import secrets
+import shutil
+import signal
+import socket
+import subprocess
+import threading
+import time
+import uuid
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
+
+from flask import Flask, Response, flash, redirect, render_template_string, request, url_for
+from PIL import Image, ImageFile, UnidentifiedImageError
+
+# ── Minimal auto‑pip (fallback only) ──────────────────────────────────────────
+def _pip_install(*pkgs: str) -> None:
+    try:
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--quiet", "--user", "--break-system-packages", *pkgs],
+            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+    except Exception:
+        # Fallback only; never fatal.
+        pass
+
+for mod, pkg in (("flask", "flask"), ("PIL", "pillow")):
+    try:
+        __import__(mod)
+    except ModuleNotFoundError:
+        print(f"Installing {pkg} …")
+        _pip_install(pkg)
+
+# =============================================================================
+# CONFIG — edit here
+# =============================================================================
+
+...<truncated for brevity; full content will be pushed>
