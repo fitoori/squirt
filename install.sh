@@ -87,7 +87,18 @@ apt_install "${APT_PACKAGES[@]}"
 
 # ── Deploy repo to prefix ─────────────────────────────────────────────────
 ensure_dirs
-rsync -a --delete --exclude '.git' --exclude '.venv' "$SCRIPT_DIR"/ "$INSTALL_DIR"/
+# Exclude runtime data directories so upgrades do not wipe cached downloads or user uploads.
+# These paths are created at runtime by the apps (see static/* usage in xkcd.py, nasa.py, webui.py).
+RSYNC_EXCLUDES=(
+  '--exclude=.git'
+  '--exclude=.venv'
+  '--exclude=static/xkcd/'
+  '--exclude=static/nasa/'
+  '--exclude=static/saved/'
+  '--exclude=static/uploads/'
+  '--exclude=static/patterns/'
+)
+rsync -a --delete "${RSYNC_EXCLUDES[@]}" "$SCRIPT_DIR"/ "$INSTALL_DIR"/
 chown -R "$TARGET_USER":"$TARGET_USER" "$INSTALL_DIR"
 ln -sfn "$INSTALL_DIR" "$TARGET_HOME/squirt"
 
