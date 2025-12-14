@@ -32,6 +32,8 @@ WIFI_IF="wlan0"
 PROFILE="squirt-sync"
 PING_HOST="home.example.com" # This value must be changed prior to running
 LOG_FILE="${HOME:-/tmp}/unison_backup.log"
+MOUNT_NFS_SRC="home.bajaj.com:/volume1/Family/sat"
+MOUNT_NFS_DST="/mnt"
 
 MIN_RSSI_DBM=-75
 MAX_LOSS_PCT=20
@@ -133,7 +135,15 @@ is_mounted(){
   return 1
 }
 maybe_mount_nfs(){
-  local src="home.bajaj.com:/volume1/Family/sat" dst="/mnt"
+  local src dst
+  src="$MOUNT_NFS_SRC"
+  dst="$MOUNT_NFS_DST"
+
+  if [[ -z "$src" || -z "$dst" ]]; then
+    log "MOUNT: skipped (unconfigured)"
+    return 0
+  fi
+
   [[ -d "$dst" ]] || { log "MOUNT: skipped dst-missing $dst"; return 0; }
   if is_mounted "$dst"; then log "MOUNT: already $dst"; return 0; fi
   if command -v sudo >/dev/null 2>&1; then
