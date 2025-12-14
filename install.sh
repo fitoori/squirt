@@ -148,6 +148,9 @@ if [[ $CRON_ENABLE -eq 1 ]]; then
     "@reboot $PATH_PREFIX $INSTALL_DIR/.venv/bin/python $INSTALL_DIR/status.py && sleep 30 && $INSTALL_DIR/.venv/bin/python $INSTALL_DIR/nasa.py --apod"
   )
   existing=$(run_as_user "crontab -l 2>/dev/null || true")
+  # Drop any previous SQUIRT-managed entries (regardless of install prefix) to avoid duplicates.
+  existing=$(printf "%s\n" "$existing" | \
+    grep -Ev '(/python .*xkcd\.py|/python .*nasa\.py --apod)' || true)
   for entry in "${CRON_ENTRIES[@]}"; do
     if ! grep -Fq "$entry" <<<"$existing"; then
       existing+=$'\n'$entry
