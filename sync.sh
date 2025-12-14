@@ -32,7 +32,7 @@ WIFI_IF="wlan0"
 PROFILE="squirt-sync"
 PING_HOST="home.example.com" # This value must be changed prior to running
 LOG_FILE="${HOME:-/tmp}/unison_backup.log"
-MOUNT_NFS_SRC="home.bajaj.com:/volume1/Family/sat"
+MOUNT_NFS_SRC="home.example.com:/squirt/"
 MOUNT_NFS_DST="/mnt"
 
 MIN_RSSI_DBM=-75
