@@ -35,6 +35,25 @@ is detected, the scripts fall back to saving PNG previews.
 
 ## Installation
 
+### One-liner (automated)
+
+1. Clone the repo and run the installer as root (or via sudo):
+   ```bash
+   git clone https://github.com/fitoori/squirt.git
+   cd squirt
+   sudo ./install.sh --user "$USER"
+   ```
+
+   The installer will:
+   - Install apt prerequisites
+   - Copy SQUIRT into `/opt/squirt` and symlink it to `~/squirt`
+   - Create a dedicated Python virtualenv and install `requirements.txt`
+   - Enable a `squirt-web.service` systemd unit for the web UI
+   - Add safe, idempotent crontab entries for hourly XKCD + boot-time APOD
+   - Drop a small `/etc/motd.d/10-squirt` hint with the above locations
+
+### Manual steps
+
 1. **Install apt dependencies**
     ```bash
     sudo apt update && sudo apt install -y \
