@@ -30,7 +30,7 @@ IFS=$'\n\t'
 ### USER SETTINGS ####################################################
 WIFI_IF="wlan0"
 PROFILE="squirt-sync"
-PING_HOST="home.bajaj.com"
+PING_HOST="home.example.com" # This value must be changed prior to running
 LOG_FILE="${HOME:-/tmp}/unison_backup.log"
 
 MIN_RSSI_DBM=-75
