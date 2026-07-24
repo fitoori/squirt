@@ -11,7 +11,7 @@ fi
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
 
 # Fail on unset vars & pipeline errors; we will guard risky calls explicitly
-set -u
+set -euo pipefail
 set -o pipefail
 IFS=$'\n\t'
 
