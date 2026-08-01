@@ -84,7 +84,7 @@ def init_inky():
 
         dev = auto()
         return dev, *dev.resolution
-    except Exception:
+    except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError):
         pass
 
     class_map = {
@@ -102,7 +102,7 @@ def init_inky():
         cls = getattr(__import__("inky", fromlist=[class_map[key]]), class_map[key])
         dev = cls(INKY_COLOUR) if key in ("phat", "what") else cls()
         return dev, *dev.resolution
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
         print("Inky unavailable:", exc, file=sys.stderr)
         return None, *HEADLESS_RES
 
