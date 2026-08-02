@@ -43,7 +43,7 @@ def _pip_install(*pkgs: str) -> None:
             [exe, "-m", "pip", "install", "--quiet", "--user", "--break-system-packages", *pkgs],
             check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         pass
 
 for mod, pkg in (("flask", "flask"), ("PIL", "pillow")):
@@ -86,7 +86,7 @@ def init_inky() -> Tuple[object | None, int, int]:
         if not (isinstance(w, int) and isinstance(h, int)):
             w, h = HEADLESS_RES
         return dev, int(w), int(h)
-    except Exception:
+    except (ImportError, OSError, AttributeError, TypeError, ValueError):
         pass
     class_map = {
         "el133uf1": "InkyEL133UF1", "spectra13": "InkyEL133UF1", "impression13": "InkyEL133UF1",
@@ -101,7 +101,7 @@ def init_inky() -> Tuple[object | None, int, int]:
         dev = cls(INKY_COLOUR) if key in {"phat", "what"} else cls()
         w, h = getattr(dev, "resolution", HEADLESS_RES)
         return dev, int(w), int(h)
-    except Exception:
+    except (ImportError, OSError, AttributeError, TypeError, ValueError):
         return None, *HEADLESS_RES
 
 INKY, WIDTH, HEIGHT = init_inky()
@@ -115,7 +115,7 @@ PATTERN_DIR = (ROOT / "patterns").resolve()
 for d in (ROOT, UPLOAD_DIR, PATTERN_DIR):
     try:
         d.mkdir(parents=True, exist_ok=True)
-    except Exception as e:
+    except OSError as e:
         log.warning("Ensure dir %s failed: %s", d, e)
 
 ALLOWED = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"}
@@ -129,7 +129,7 @@ def _env_int(name: str, default: int, lo: Optional[int] = None, hi: Optional[int
         if lo is not None and v < lo: v = lo
         if hi is not None and v > hi: v = hi
         return v
-    except Exception:
+    except (TypeError, ValueError):
         return default
 
 LOG_FILE = os.environ.get("UNISON_LOG", str(Path.home() / "unison_backup.log"))
@@ -189,7 +189,7 @@ class _IdleGuard:
                 if self._active == 0 and (time.monotonic() - self._last) >= self.timeout:
                     try:
                         os.kill(os.getpid(), signal.SIGTERM)
-                    except Exception:
+                    except OSError:
                         os._exit(0)
 
 _idle = _IdleGuard(IDLE_TIMEOUT)
@@ -202,7 +202,7 @@ def _run(cmd: List[str]) -> str:
         return ""
     try:
         return subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL).strip()
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         return ""
 
 def _cmd_is_usable(cmd: List[str]) -> Tuple[bool, str]:
@@ -229,7 +229,7 @@ def _http_get(url: str, timeout: float = 2.8) -> tuple[int, bytes, str]:
         req = Request(url, headers={"User-Agent": "Squirt/1.1"})
         with urlopen(req, timeout=timeout) as r:
             return int(r.status or 0), r.read(262144), r.headers.get_content_type() or ""
-    except Exception:
+    except (OSError, ValueError):
         return 0, b"", ""
 
 def _http_head_ok(url: str, timeout: float = 1.6) -> bool:
@@ -237,7 +237,7 @@ def _http_head_ok(url: str, timeout: float = 1.6) -> bool:
         req = Request(url, headers={"User-Agent": "Squirt/1.1"}, method="HEAD")
         with urlopen(req, timeout=timeout) as r:
             return 200 <= int(r.status or 0) < 400
-    except Exception:
+    except (OSError, ValueError):
         return False
 
 def _safe_image_ext(fmt: Optional[str]) -> str:
@@ -246,7 +246,7 @@ def _safe_image_ext(fmt: Optional[str]) -> str:
 def _apply_exif(im: Image.Image) -> Image.Image:
     try:
         return ImageOps.exif_transpose(im)
-    except Exception:
+    except (OSError, AttributeError, TypeError, ValueError):
         return im
 
 def _clamp_mode(val: str) -> str:
@@ -318,7 +318,7 @@ def display_and_preview(src_path: Path, matte: str, mode: str) -> str:
         try:
             INKY.set_image(frame)
             INKY.show()
-        except Exception as e:
+        except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as e:
             raise RuntimeError(f"Inky display error: {e}") from e
     return BUF.put(frame, fmt="PNG")
 
@@ -340,7 +340,7 @@ def save_upload(fs) -> Path:
             im.verify()
         with Image.open(tmp) as im2:
             ext2 = _safe_image_ext(im2.format)
-    except Exception:
+    except (UnidentifiedImageError, OSError, ValueError):
         tmp.unlink(missing_ok=True)
         raise
     final = UPLOAD_DIR / f"{uuid.uuid4().hex}{ext2}"
@@ -376,7 +376,7 @@ def fetch_image_to_uploads(url: str) -> Path:
         final = UPLOAD_DIR / f"{uuid.uuid4().hex}{ext}"
         tmp.replace(final)
         return final
-    except Exception:
+    except (UnidentifiedImageError, OSError, ValueError):
         tmp.unlink(missing_ok=True)
         raise
 
@@ -390,11 +390,11 @@ def select_bg_pattern() -> Tuple[Optional[str], int]:
         try:
             with Image.open(pick) as im:
                 blur = max(1, min(12, round(min(im.width, im.height) * 0.10)))
-        except Exception:
+        except (UnidentifiedImageError, OSError, ValueError):
             blur = 4
         rel = pick.resolve().relative_to(ROOT.resolve()).as_posix()
         return rel, blur
-    except Exception:
+    except (OSError, ValueError):
         return None, 0
 
 # ── System / Unison / PiSugar ────────────────────────────────────────────
@@ -412,14 +412,14 @@ def get_uptime() -> str:
         if hrs:
             return f"up {hrs} hours, {mins%60} minutes"
         return f"up {mins} minutes"
-    except Exception:
+    except (OSError, ValueError, IndexError):
         return "N/A"
 
 def get_disk() -> str:
     out = _run(["df", "-h", str(Path.home())])
     try:
         return out.splitlines()[1].split()[3] + " free"
-    except Exception:
+    except IndexError:
         return "N/A"
 
 def get_mem() -> str:
@@ -432,7 +432,7 @@ def get_mem() -> str:
                 total = parts[1]
                 return f"{avail} available of {total}"
         return "N/A"
-    except Exception:
+    except IndexError:
         return "N/A"
 
 def get_cpu_load_pct() -> str:
@@ -440,7 +440,7 @@ def get_cpu_load_pct() -> str:
         load1 = os.getloadavg()[0]
         cores = os.cpu_count() or 1
         return f"{(load1 / cores) * 100:.1f}%"
-    except Exception:
+    except (OSError, ValueError):
         return "N/A"
 
 def get_cpu_temp_c() -> str:
@@ -448,7 +448,7 @@ def get_cpu_temp_c() -> str:
     if p.exists():
         try:
             return f"{float(p.read_text()) / 1000:.1f}°C"
-        except Exception:
+        except (OSError, ValueError):
             pass
     return "N/A"
 
@@ -464,11 +464,11 @@ def _read_last_lines(path: Path, n: int) -> List[str]:
             for line in f:
                 dq.append(line.rstrip(b"\r\n"))
         return [b.decode("utf-8", "replace") for b in dq]
-    except Exception:
+    except OSError:
         try:
             out = subprocess.check_output(["tail", "-n", str(n), str(path)], text=True, stderr=subprocess.DEVNULL)
             return out.splitlines()[-n:]
-        except Exception:
+        except (OSError, subprocess.SubprocessError):
             return ["<unable to read log>"]
 
 @dataclass
@@ -529,7 +529,7 @@ def _read_all(sock: socket.socket, timeout: float = 0.7, max_bytes: int = 65536)
             total += len(data)
             if total >= max_bytes:
                 break
-    except Exception:
+    except OSError:
         pass
     return b"".join(chunks)
 
@@ -538,10 +538,10 @@ def _pisugar_via_socket(host: str = "127.0.0.1", port: int = 8423) -> Optional[b
         with socket.create_connection((host, port), timeout=0.6) as s:
             try:
                 s.sendall(b"get battery\n")
-            except Exception:
+            except OSError:
                 return None
             return _read_all(s, timeout=0.6)
-    except Exception:
+    except OSError:
         return None
 
 def _normalize_bool(val) -> Optional[bool]:
@@ -579,7 +579,7 @@ def _parse_pisugar_payload(data: bytes | str) -> Dict[str, str]:
     # Try JSON first
     try:
         obj = json.loads(text)
-    except Exception:
+    except json.JSONDecodeError:
         obj = None
 
     if isinstance(obj, dict):
@@ -592,16 +592,16 @@ def _parse_pisugar_payload(data: bytes | str) -> Dict[str, str]:
                     if any(x in lk for x in ("percent","percentage","level","soc","battery","power")):
                         try:
                             info["level"] = f"{int(round(float(v)))}%"
-                        except Exception:
+                        except (TypeError, ValueError, OverflowError):
                             pass
                     if "volt" in lk or lk in {"vbat","battery_voltage"}:
                         try:
                             info["voltage"] = f"{float(v):.2f}V"
-                        except Exception:
+                        except (TypeError, ValueError):
                             try:
                                 m = re.search(r'([0-9]+(?:\.[0-9]+)?)', str(v))
                                 if m: info["voltage"] = f"{float(m.group(1)):.2f}V"
-                            except Exception:
+                            except (TypeError, ValueError):
                                 pass
                     if "charg" in lk or lk in {"is_charging","charging","charge_status"}:
                         b = _normalize_bool(v)
@@ -627,14 +627,14 @@ def _parse_pisugar_payload(data: bytes | str) -> Dict[str, str]:
                 if any(x in lk for x in ("percent","percentage","level","soc","battery","power")) and "level" not in info:
                     try:
                         info["level"] = f"{int(round(float(re.sub(r'[^0-9.]+','', v) or 0)))}%"
-                    except Exception:
+                    except (TypeError, ValueError, OverflowError):
                         pass
                 if ("volt" in lk or lk in {"vbat","battery_voltage"}) and "voltage" not in info:
                     m = re.search(r'([0-9]+(?:\.[0-9]+)?)', v)
                     if m:
                         try:
                             info["voltage"] = f"{float(m.group(1)):.2f}V"
-                        except Exception:
+                        except (TypeError, ValueError):
                             pass
                 if "charg" in lk or lk in {"is_charging","charging","charge_status"}:
                     b = _normalize_bool(v)
@@ -652,7 +652,7 @@ def _parse_pisugar_payload(data: bytes | str) -> Dict[str, str]:
         if m:
             try:
                 info["voltage"] = f"{float(m.group(1)):.2f}V"
-            except Exception:
+            except (TypeError, ValueError):
                 pass
     if "charging" not in info:
         if re.search(r'\bcharging\b', text, re.I):
@@ -665,14 +665,14 @@ def _parse_pisugar_payload(data: bytes | str) -> Dict[str, str]:
         try:
             n = int(re.sub(r'[^0-9]', '', info["level"]) or 0)
             info["level"] = f"{max(0, min(100, n))}%"
-        except Exception:
+        except (TypeError, ValueError):
             pass
     if "voltage" in info:
         m = re.search(r'([0-9]+(?:\.[0-9]+)?)', info["voltage"])
         if m:
             try:
                 info["voltage"] = f"{float(m.group(1)):.2f}V"
-            except Exception:
+            except (TypeError, ValueError):
                 pass
 
     return info
@@ -738,20 +738,20 @@ def _fmt_bytes(n: int) -> str:
             if f < 1024.0 or u == units[-1]:
                 return f"{f:.0f} {u}" if u == "B" else f"{f:.1f} {u}"
             f /= 1024.0
-    except Exception:
+    except (TypeError, ValueError, OverflowError):
         pass
     return "N/A"
 
 def _fmt_time(ts: float) -> str:
     try:
         return time.strftime("%Y-%m-%d %H:%M", time.localtime(ts))
-    except Exception:
+    except (OSError, TypeError, ValueError, OverflowError):
         return "N/A"
 
 def _list_dir(dirpath: Path):
     try:
         entries = list(dirpath.iterdir())
-    except Exception:
+    except OSError:
         entries = []
     dirs = [{"name": d.name, "link": (dirpath / d.name).relative_to(ROOT).as_posix()}
             for d in sorted([x for x in entries if x.is_dir()], key=lambda x: x.name.lower())]
@@ -761,7 +761,7 @@ def _list_dir(dirpath: Path):
             st = f.stat()
             size = _fmt_bytes(st.st_size)
             mtime = _fmt_time(st.st_mtime)
-        except Exception:
+        except OSError:
             size = "N/A"; mtime = "N/A"
         imgs.append({"name": f.name, "rel": f.relative_to(ROOT).as_posix(), "size": size, "mtime": mtime})
     return dirs, imgs
@@ -1296,7 +1296,7 @@ def logfeed():
     path = Path(LOG_FILE)
     try:
         n = int(request.args.get("n", "200"))
-    except Exception:
+    except (TypeError, ValueError):
         n = 200
     n = max(10, min(n, 1000))
     if not path.exists() or not path.is_file():
@@ -1306,7 +1306,7 @@ def logfeed():
         try:
             st = path.stat()
             h = f"{st.st_mtime_ns}-{st.st_size}"
-        except Exception:
+        except OSError:
             h = f"{int(time.time())}-0"
         payload = {"lines": lines, "hash": h}
     return app.response_class(
@@ -1334,7 +1334,7 @@ def index():
     def _num(s: str) -> float:
         try:
             return float(s.strip("%°C"))
-        except Exception:
+        except (AttributeError, TypeError, ValueError):
             return 100.0
 
     try:
@@ -1342,7 +1342,7 @@ def index():
             (p.name for p in UPLOAD_DIR.iterdir() if p.is_file() and p.suffix.lower() in ALLOWED),
             reverse=True
         )[:24]
-    except Exception:
+    except OSError:
         uploads = []
 
     bat = probe_pisugar_status() if PISUGAR else {"reachable": False, "level": "N/A", "voltage": "N/A", "charging": "N/A"}
@@ -1399,7 +1399,7 @@ def upload():
     except (UnidentifiedImageError, OSError, ValueError) as e:
         try:
             if saved: saved.unlink(missing_ok=True)
-        except Exception:
+        except OSError:
             pass
         flash(f"Upload failed: {e}")
     except RuntimeError as e:
@@ -1437,7 +1437,7 @@ def display_existing(filename: str):
     try:
         display_and_preview(file_path, matte=matte, mode=mode)
         flash(f"Displayed {file_path.name}")
-    except Exception as e:
+    except (UnidentifiedImageError, OSError, RuntimeError, ValueError) as e:
         flash(f"Display failed: {e}")
     return redirect(url_for("index"))
 
@@ -1469,7 +1469,7 @@ def run_script(name: str):
             flash(f"Ran {name}{(' ('+used+')') if used else ''}.")
     except subprocess.TimeoutExpired:
         flash(f"{name} timed out after {SCRIPT_TIMEOUT}s")
-    except Exception as e:
+    except (OSError, subprocess.SubprocessError) as e:
         flash(f"{name} failed: {e}")
     return redirect(url_for("sync_page") if name == "sync" else url_for("index"))
 
@@ -1479,7 +1479,7 @@ def _systemctl_call(*args: str) -> int:
         if p and Path(p).exists():
             try:
                 return subprocess.call([p, *args])
-            except Exception:
+            except (OSError, subprocess.SubprocessError):
                 continue
     return 127
 
@@ -1497,13 +1497,13 @@ def power():
                         req = Request(PISUGAR_BASE_LOOP + path, method="POST", headers={"User-Agent": "Squirt/1.1"})
                         with urlopen(req, timeout=2.0):
                             break
-                except Exception:
+                except OSError:
                     pass
             rc = _systemctl_call("poweroff", "-i")
             flash(("Sleep" if PISUGAR else "Shutdown") + (" requested." if rc == 0 else " failed (permissions?)."))
         else:
             flash("Unknown power action.")
-    except Exception as e:
+    except (OSError, subprocess.SubprocessError, ValueError) as e:
         flash(f"Power action error: {e}")
     return redirect(url_for("index"))
 
@@ -1539,7 +1539,7 @@ def mkdir(subpath: str):
         flash(f"Created {name}/")
     except FileExistsError:
         flash("Folder already exists.")
-    except Exception as e:
+    except OSError as e:
         flash(f"Create failed: {e}")
     return redirect(url_for("browser", subpath=subpath))
 
@@ -1568,7 +1568,7 @@ def upload_to(subpath: str):
     except (UnidentifiedImageError, OSError, ValueError) as e:
         try:
             if tmp: tmp.unlink(missing_ok=True)
-        except Exception:
+        except OSError:
             pass
         flash(f"Upload failed: {e}")
     return redirect(url_for("browser", subpath=subpath))
@@ -1584,7 +1584,7 @@ def delete_file(subpath: str):
     try:
         target.unlink()
         flash(f"Deleted {name}")
-    except Exception as e:
+    except OSError as e:
         flash(f"Delete failed: {e}")
     return redirect(url_for("browser", subpath=subpath))
 
@@ -1604,7 +1604,7 @@ def display_from_browser(subpath: str):
     try:
         display_and_preview(target, matte=matte, mode=mode)
         flash(f"Displayed {name}")
-    except Exception as e:
+    except (UnidentifiedImageError, OSError, RuntimeError, ValueError) as e:
         flash(f"Display failed: {e}")
     return redirect(url_for("browser", subpath=subpath))
 
@@ -1612,11 +1612,11 @@ def display_from_browser(subpath: str):
 if __name__ == "__main__":
     try:
         _ = select_bg_pattern()  # warm path
-    except Exception:
+    except (OSError, ValueError):
         pass
     try:
         port = _env_int("PORT", 8080, 1, 65535)
         app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False, threaded=True)
-    except Exception as e:
+    except (OSError, RuntimeError) as e:
         log.error("Failed to start Flask app: %s", e)
         sys.exit(1)
