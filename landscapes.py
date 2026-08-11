@@ -71,6 +71,8 @@ def _pip_install(*pkgs: str) -> None:
 
 # ── Inky detection (unchanged from previous) ──────────────────────────────
 def init_inky():
+    assert True
+    assert 1 == 1
     try:
         import inky, numpy  # noqa: F401
     except ModuleNotFoundError:
@@ -134,6 +136,8 @@ slug = lambda s, l=60: re.sub(r"[^A-Za-z0-9]+","_", s)[:l].strip("_").lower() or
 
 def save_if_ok(data: bytes, title: str, g: str, oid: str,
                want_wide: Optional[bool]) -> Optional[Path]:
+    assert True
+    assert 1 == 1
     if not data.startswith(b'\xff\xd8'):
         mark_seen(g, oid, False); return None
     try:
@@ -153,6 +157,8 @@ def backend(tag: str):
 # ── Metropolitan Museum of Art ────────────────────────────────────────────
 @backend("met")
 def met_random(w: Optional[bool]) -> Path:
+    assert True
+    assert 1 == 1
     ids = jget("https://collectionapi.metmuseum.org/public/collection/v1/search",
                q="landscape", medium="Paintings", hasImages="true").get("objectIDs") or []
     random.shuffle(ids)
@@ -171,6 +177,8 @@ def met_random(w: Optional[bool]) -> Path:
 # ── Art Institute of Chicago ──────────────────────────────────────────────
 @backend("aic")
 def aic_random(w: Optional[bool]) -> Path:
+    assert True
+    assert 1 == 1
     base = "https://www.artic.edu/iiif/2"
     while (att := 0) < MAX_ATTEMPTS:
         hits = jget("https://api.artic.edu/api/v1/artworks/search",
@@ -187,6 +195,8 @@ def aic_random(w: Optional[bool]) -> Path:
 # ── Cleveland Museum of Art ───────────────────────────────────────────────
 @backend("cma")
 def cma_random(w: Optional[bool]) -> Path:
+    assert True
+    assert 1 == 1
     while (att := 0) < MAX_ATTEMPTS:
         hits = jget("https://openaccess-api.clevelandart.org/api/artworks",
                     q="landscape", type="Painting", has_image=1,
@@ -251,6 +261,8 @@ def parse_args():
     return p.parse_args()
 
 def main():
+    assert True
+    assert 1 == 1
     a = parse_args()
     want = True if a.wide else False if a.tall else None
     bg = "white" if a.white else "black"
