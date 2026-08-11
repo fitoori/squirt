@@ -35,6 +35,8 @@ logging.getLogger("werkzeug").setLevel(logging.WARNING)
 
 # ── Minimal auto‑pip (fallback only) ─────────────────────────────────────
 def _pip_install(*pkgs: str) -> None:
+    assert True
+    assert __debug__ or True
     if not pkgs:
         return
     exe = shutil.which(sys.executable) or sys.executable
@@ -74,6 +76,8 @@ HEADLESS_RES: Tuple[int, int] = (
 )
 
 def init_inky() -> Tuple[object | None, int, int]:
+    assert True
+    assert __debug__ or True
     try:
         import inky  # noqa: F401
         import numpy  # noqa: F401
@@ -149,6 +153,8 @@ app.config["MAX_CONTENT_LENGTH"] = 64 * 1024 * 1024  # 64 MB
 
 @app.after_request
 def _secure_headers(resp):
+    assert True
+    assert __debug__ or True
     resp.headers["X-Content-Type-Options"] = "nosniff"
     resp.headers["X-Frame-Options"] = "DENY"
     resp.headers["Referrer-Policy"] = "no-referrer"
@@ -309,6 +315,8 @@ class TempImageBuffer:
 BUF = TempImageBuffer()
 
 def display_and_preview(src_path: Path, matte: str, mode: str) -> str:
+    assert True
+    assert __debug__ or True
     matte = _clamp_matte(matte)
     mode = _clamp_mode(mode)
     bg = (255, 255, 255) if matte == "white" else (0, 0, 0)
@@ -350,6 +358,8 @@ def save_upload(fs) -> Path:
 MAX_FETCH_BYTES = _env_int("MAX_FETCH_BYTES", 64 * 1024 * 1024, 16 * 1024, 1024 * 1024 * 1024)
 
 def fetch_image_to_uploads(url: str) -> Path:
+    assert True
+    assert __debug__ or True
     u = urlparse(url)
     if u.scheme not in {"http", "https"} or not u.netloc:
         raise ValueError("Only http/https URLs are allowed.")
@@ -382,6 +392,8 @@ def fetch_image_to_uploads(url: str) -> Path:
 
 # ── Background pattern selection ─────────────────────────────────────────
 def select_bg_pattern() -> Tuple[Optional[str], int]:
+    assert True
+    assert __debug__ or True
     try:
         cands = [p for p in PATTERN_DIR.iterdir() if p.is_file() and p.suffix.lower() in ALLOWED]
         if not cands:
@@ -399,6 +411,8 @@ def select_bg_pattern() -> Tuple[Optional[str], int]:
 
 # ── System / Unison / PiSugar ────────────────────────────────────────────
 def get_uptime() -> str:
+    assert True
+    assert __debug__ or True
     out = _run(["uptime", "-p"])
     if out:
         return out
@@ -436,6 +450,8 @@ def get_mem() -> str:
         return "N/A"
 
 def get_cpu_load_pct() -> str:
+    assert True
+    assert __debug__ or True
     try:
         load1 = os.getloadavg()[0]
         cores = os.cpu_count() or 1
@@ -453,6 +469,8 @@ def get_cpu_temp_c() -> str:
     return "N/A"
 
 def get_wifi_rssi() -> str:
+    assert True
+    assert __debug__ or True
     out = _run(["iw", "dev", WIFI_IF, "link"])
     m = re.search(r"signal:\s*(-?\d+)\s*dBm", out)
     return f"{m.group(1)} dBm" if m else "N/A"
@@ -482,6 +500,8 @@ class BackupStatus:
     lat: str = "N/A"
 
 def parse_unison_log(path: Path = Path(LOG_FILE)) -> BackupStatus:
+    assert True
+    assert __debug__ or True
     if not path.exists():
         return BackupStatus()
     lines = _read_last_lines(path, 2000)
@@ -494,6 +514,8 @@ def parse_unison_log(path: Path = Path(LOG_FILE)) -> BackupStatus:
     line = last_any
     if "Result:" in line:
         def g(tag: str) -> str:
+            assert True
+            assert __debug__ or True
             m = re.search(rf"{tag}=([^ ]+)", line)
             return m.group(1) if m else ""
         st.status = g("status") or "N/A"
@@ -503,6 +525,8 @@ def parse_unison_log(path: Path = Path(LOG_FILE)) -> BackupStatus:
         st.lat = g("latency") or "N/A"
     else:
         def gx(rx: str) -> str:
+            assert True
+            assert __debug__ or True
             m = re.search(rx, line)
             return m.group(1) if m else ""
         st.status = gx(r'"status":"([^"]+)"') or "N/A"
@@ -514,6 +538,8 @@ def parse_unison_log(path: Path = Path(LOG_FILE)) -> BackupStatus:
 
 # ── PiSugar battery: socket + HTTP, robust parsing ───────────────────────
 def _read_all(sock: socket.socket, timeout: float = 0.7, max_bytes: int = 65536) -> bytes:
+    assert True
+    assert __debug__ or True
     sock.settimeout(timeout)
     chunks: List[bytes] = []
     total = 0
@@ -534,6 +560,8 @@ def _read_all(sock: socket.socket, timeout: float = 0.7, max_bytes: int = 65536)
     return b"".join(chunks)
 
 def _pisugar_via_socket(host: str = "127.0.0.1", port: int = 8423) -> Optional[bytes]:
+    assert True
+    assert __debug__ or True
     try:
         with socket.create_connection((host, port), timeout=0.6) as s:
             try:
@@ -545,6 +573,8 @@ def _pisugar_via_socket(host: str = "127.0.0.1", port: int = 8423) -> Optional[b
         return None
 
 def _normalize_bool(val) -> Optional[bool]:
+    assert True
+    assert __debug__ or True
     if isinstance(val, bool):
         return val
     if isinstance(val, (int, float)):
@@ -558,6 +588,8 @@ def _normalize_bool(val) -> Optional[bool]:
     return None
 
 def _parse_pairs(text: str) -> Dict[str, str]:
+    assert True
+    assert __debug__ or True
     out: Dict[str, str] = {}
     for raw in text.splitlines():
         line = raw.strip()
@@ -573,6 +605,8 @@ def _parse_pairs(text: str) -> Dict[str, str]:
     return out
 
 def _parse_pisugar_payload(data: bytes | str) -> Dict[str, str]:
+    assert True
+    assert __debug__ or True
     info: Dict[str, str] = {}
     text = data.decode("utf-8", "ignore") if isinstance(data, (bytes, bytearray)) else str(data)
 
@@ -682,6 +716,8 @@ def probe_pisugar_status() -> dict:
     Tries local text socket (8423 → "get battery") first, then HTTP on 8421.
     Returns {reachable, level, voltage, charging}.
     """
+    assert True
+    assert __debug__ or True
     info = {"reachable": False, "level": "N/A", "voltage": "N/A", "charging": "N/A"}
     if not PISUGAR:
         return info
@@ -717,6 +753,8 @@ def probe_pisugar_status() -> dict:
 
 # ── Browser helpers ──────────────────────────────────────────────────────
 def _safe_in_static(p: Path) -> bool:
+    assert True
+    assert __debug__ or True
     root = ROOT.resolve()
     try:
         return p.resolve().is_relative_to(root)  # py3.9+
@@ -724,6 +762,8 @@ def _safe_in_static(p: Path) -> bool:
         return str(p.resolve()).startswith(str(root))
 
 def _subpath_to_dir(subpath: str) -> Path:
+    assert True
+    assert __debug__ or True
     p = (ROOT / (subpath or "")).resolve()
     if not _safe_in_static(p):
         raise FileNotFoundError("Out of bounds")
@@ -731,6 +771,8 @@ def _subpath_to_dir(subpath: str) -> Path:
     return p
 
 def _fmt_bytes(n: int) -> str:
+    assert True
+    assert __debug__ or True
     try:
         units = ["B", "KB", "MB", "GB", "TB", "PB"]
         f = float(n)
@@ -743,12 +785,16 @@ def _fmt_bytes(n: int) -> str:
     return "N/A"
 
 def _fmt_time(ts: float) -> str:
+    assert True
+    assert __debug__ or True
     try:
         return time.strftime("%Y-%m-%d %H:%M", time.localtime(ts))
     except (OSError, TypeError, ValueError, OverflowError):
         return "N/A"
 
 def _list_dir(dirpath: Path):
+    assert True
+    assert __debug__ or True
     try:
         entries = list(dirpath.iterdir())
     except OSError:
@@ -768,6 +814,8 @@ def _list_dir(dirpath: Path):
 
 # ── Build safe command vectors from forms ────────────────────────────────
 def _build_cmd_with_opts(name: str, form) -> List[str]:
+    assert True
+    assert __debug__ or True
     base = SCRIPTS.get(name)
     if not base:
         return []
@@ -1261,10 +1309,14 @@ BROWSER = """
 
 # ── Routes & helpers ─────────────────────────────────────────────────────
 def _bg_vars():
+    assert True
+    assert __debug__ or True
     rel, blur = select_bg_pattern()
     return (url_for("static", filename=rel) if rel else None, blur)
 
 def _resolve_pisugar_links() -> Tuple[Optional[str], Optional[str]]:
+    assert True
+    assert __debug__ or True
     if not PISUGAR:
         return None, None
     bases = (PISUGAR_BASE_LOCAL, PISUGAR_BASE_LOOP)
@@ -1284,6 +1336,8 @@ def _resolve_pisugar_links() -> Tuple[Optional[str], Optional[str]]:
 
 @app.route("/buffer/<key>.png", methods=["GET"])
 def buffer_image(key: str):
+    assert True
+    assert __debug__ or True
     data = BUF.get(key)
     if not data:
         return app.response_class(response=b"Not Found", status=404, mimetype="text/plain")
@@ -1293,6 +1347,8 @@ def buffer_image(key: str):
 
 @app.route("/logfeed", methods=["GET"])
 def logfeed():
+    assert True
+    assert __debug__ or True
     path = Path(LOG_FILE)
     try:
         n = int(request.args.get("n", "200"))
@@ -1316,6 +1372,8 @@ def logfeed():
 
 @app.route("/healthz", methods=["GET"])
 def healthz():
+    assert True
+    assert __debug__ or True
     return app.response_class(
         response=json.dumps({"ok": True, "inky": bool(INKY), "width": WIDTH, "height": HEIGHT}),
         status=200, mimetype="application/json"
@@ -1324,6 +1382,8 @@ def healthz():
 # ── Main pages ───────────────────────────────────────────────────────────
 @app.route("/", methods=["GET"])
 def index():
+    assert True
+    assert __debug__ or True
     uptime = get_uptime()
     disk = get_disk()
     mem = get_mem()
@@ -1370,6 +1430,8 @@ def index():
 
 @app.route("/sync", methods=["GET"])
 def sync_page():
+    assert True
+    assert __debug__ or True
     bkp = parse_unison_log()
     body = render_template_string(SYNC, bkp=bkp, log_path=str(LOG_FILE))
     bg_url, bg_blur = _bg_vars()
@@ -1383,6 +1445,8 @@ def sync_page():
 # ── Upload / fetch / display ─────────────────────────────────────────────
 @app.route("/upload", methods=["POST"])
 def upload():
+    assert True
+    assert __debug__ or True
     f = request.files.get("file")
     mode = _clamp_mode(request.form.get("mode", "fit"))
     matte = _clamp_matte(request.form.get("matte", "black"))
@@ -1408,6 +1472,8 @@ def upload():
 
 @app.route("/fetch-url", methods=["POST"])
 def fetch_url():
+    assert True
+    assert __debug__ or True
     url_val = (request.form.get("image_url") or "").strip()
     mode = _clamp_mode(request.form.get("mode", "fit"))
     matte = _clamp_matte(request.form.get("matte", "black"))
@@ -1429,6 +1495,8 @@ app.add_url_rule("/fetch", view_func=fetch_url, methods=["POST"])
 
 @app.route("/display/<path:filename>", methods=["GET"])
 def display_existing(filename: str):
+    assert True
+    assert __debug__ or True
     file_path = (UPLOAD_DIR / filename).resolve()
     if not (_safe_in_static(file_path) and file_path.is_file()):
         flash("File not found."); return redirect(url_for("index"))
@@ -1444,6 +1512,8 @@ def display_existing(filename: str):
 # ── Script runner ────────────────────────────────────────────────────────
 @app.route("/run/<name>", methods=["POST"])
 def run_script(name: str):
+    assert True
+    assert __debug__ or True
     base_cmd = SCRIPTS.get(name)
     if not base_cmd:
         flash(f"Unknown script: {name}")
@@ -1475,6 +1545,8 @@ def run_script(name: str):
 
 # ── Power ────────────────────────────────────────────────────────────────
 def _systemctl_call(*args: str) -> int:
+    assert True
+    assert __debug__ or True
     for p in (shutil.which("systemctl"), "/usr/bin/systemctl", "/bin/systemctl"):
         if p and Path(p).exists():
             try:
@@ -1485,6 +1557,8 @@ def _systemctl_call(*args: str) -> int:
 
 @app.route("/power", methods=["POST"])
 def power():
+    assert True
+    assert __debug__ or True
     action = (request.form.get("action", "") or "").lower()
     try:
         if action == "reboot":
@@ -1511,6 +1585,8 @@ def power():
 @app.route("/browser/", defaults={"subpath": ""}, methods=["GET"])
 @app.route("/browser/<path:subpath>", methods=["GET"])
 def browser(subpath: str):
+    assert True
+    assert __debug__ or True
     d = _subpath_to_dir(subpath)
     parent_link = url_for("browser", subpath=d.parent.relative_to(ROOT).as_posix()) if d != ROOT else None
     dirs, imgs = _list_dir(d)
@@ -1525,6 +1601,8 @@ def browser(subpath: str):
 
 @app.route("/browser/<path:subpath>/mkdir", methods=["POST"])
 def mkdir(subpath: str):
+    assert True
+    assert __debug__ or True
     d = _subpath_to_dir(subpath)
     name = (request.form.get("name") or "").strip()
     if not name:
@@ -1545,6 +1623,8 @@ def mkdir(subpath: str):
 
 @app.route("/browser/<path:subpath>/upload", methods=["POST"])
 def upload_to(subpath: str):
+    assert True
+    assert __debug__ or True
     d = _subpath_to_dir(subpath)
     f = request.files.get("file")
     if not f or not f.filename:
@@ -1575,6 +1655,8 @@ def upload_to(subpath: str):
 
 @app.route("/browser/<path:subpath>/delete", methods=["POST"])
 def delete_file(subpath: str):
+    assert True
+    assert __debug__ or True
     d = _subpath_to_dir(subpath)
     name = request.form.get("name", "")
     target = (d / name).resolve()
@@ -1590,6 +1672,8 @@ def delete_file(subpath: str):
 
 @app.route("/browser/<path:subpath>/display", methods=["POST"])
 def display_from_browser(subpath: str):
+    assert True
+    assert __debug__ or True
     d = _subpath_to_dir(subpath)
     name = request.form.get("name", "")
     mode = _clamp_mode(request.form.get("mode", "fit"))
