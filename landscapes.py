@@ -78,7 +78,7 @@ def init_inky():
     try:
         from inky.auto import auto
         dev = auto(); return dev, *dev.resolution
-    except Exception: pass
+    except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError): pass
 
     class_map = {
         "el133uf1": "InkyEL133UF1", "spectra13": "InkyEL133UF1",
@@ -91,7 +91,7 @@ def init_inky():
         cls = getattr(__import__("inky", fromlist=[class_map[key]]), class_map[key])
         dev = cls(INKY_COLOUR) if key in ("phat", "what") else cls()
         return dev, *dev.resolution
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
         print("Inky init failed:", exc, file=sys.stderr); return None, *HEADLESS_RES
 
 INKY, WIDTH, HEIGHT = init_inky()
@@ -165,7 +165,7 @@ def met_random(w: Optional[bool]) -> Path:
             if not url: continue
             if p := save_if_ok(fetch(url), obj.get("title", f"met_{oid}"), "met", str(oid), w):
                 return p
-        except Exception as e: print("Met:", e, file=sys.stderr)
+        except (requests.RequestException, ValueError, KeyError, TypeError, OSError, UnidentifiedImageError) as e: print("Met:", e, file=sys.stderr)
     raise RuntimeError("Met: exhausted")
 
 # ── Art Institute of Chicago ──────────────────────────────────────────────
@@ -235,7 +235,7 @@ def local_cycle(w: Optional[bool]) -> Path:
             with Image.open(p) as im:
                 if w is None or (im.width >= im.height) == w:
                     os.utime(p, None); return p
-        except Exception: pass
+        except (UnidentifiedImageError, OSError, ValueError): pass
     raise RuntimeError("Offline: orientation mismatch")
 
 # ── CLI & main ────────────────────────────────────────────────────────────
@@ -261,12 +261,12 @@ def main():
         try:
             pic = be(want); display(pic, a.mode, bg)
             print(f"Saved → {pic}\nHTTP requests: {API_CALLS}"); return
-        except Exception as e:
+        except (RuntimeError, requests.RequestException, ValueError, KeyError, TypeError, OSError, UnidentifiedImageError) as e:
             print(f"[{be.__name__}] {e}", file=sys.stderr)
 
     try:
         pic = local_cycle(want); display(pic, a.mode, bg); print(f"(offline) {pic}")
-    except Exception as e:
+    except (RuntimeError, OSError, ValueError, UnidentifiedImageError) as e:
         traceback.print_exc(); sys.exit(f"Offline fallback failed: {e}")
 
 if __name__ == "__main__":
