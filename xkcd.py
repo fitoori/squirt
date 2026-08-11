@@ -91,7 +91,7 @@ def init_inky():
         from inky.auto import auto
         dev = auto()
         return dev, *dev.resolution
-    except Exception:
+    except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError):
         pass
 
     cls_map = {
@@ -109,7 +109,7 @@ def init_inky():
         cls = getattr(__import__("inky", fromlist=[cls_map[key]]), cls_map[key])
         dev = cls(INKY_COLOUR) if key in ("phat", "what") else cls()
         return dev, *dev.resolution
-    except Exception as err:
+    except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as err:
         print("Inky init failed:", err, file=sys.stderr)
         return None, *HEADLESS_RES
 
@@ -127,13 +127,13 @@ def load_seen() -> Set[str]:
     try:
         data = json.loads(SEEN_FILE.read_text())
         return set(data) if isinstance(data, list) else set()
-    except Exception:
+    except (OSError, json.JSONDecodeError, TypeError):
         return set()
 
 def save_seen(seen: Set[str]) -> None:
     try:
         SEEN_FILE.write_text(json.dumps(sorted(seen)))
-    except Exception as e:
+    except (OSError, TypeError) as e:
         print("WARN: could not write seen.json:", e, file=sys.stderr)
 
 SEEN: Set[str] = load_seen()
@@ -191,7 +191,7 @@ def fetch_xkcd(panel_landscape: bool) -> Path:
             with Image.open(p) as im:
                 if acceptable(im.width, im.height, panel_landscape):
                     return p
-        except Exception:
+        except (UnidentifiedImageError, OSError, ValueError):
             pass  # corrupt download? keep and continue
         print(f"Skipped unsuitable orientation ({attempt}/{MAX_FETCH_ATTEMPTS}) → {p.name}",
               file=sys.stderr)
@@ -211,7 +211,7 @@ def random_cached(panel_landscape: bool) -> Path:
             with Image.open(p) as im:
                 if acceptable(im.width, im.height, panel_landscape):
                     return p
-        except Exception:
+        except (UnidentifiedImageError, OSError, ValueError):
             continue
     # fallback: any acceptable, even if seen
     for p in imgs:
@@ -220,7 +220,7 @@ def random_cached(panel_landscape: bool) -> Path:
                 if acceptable(im.width, im.height, panel_landscape):
                     SEEN.discard(p.name)  # reset rotation cycle
                     return p
-        except Exception:
+        except (UnidentifiedImageError, OSError, ValueError):
             continue
     raise RuntimeError("No cached comic matches panel orientation")
 
@@ -265,12 +265,12 @@ def main() -> None:
     try:
         comic = fetch_xkcd(panel_landscape)
         src = "online"
-    except Exception as e:
+    except (RuntimeError, requests.RequestException, OSError) as e:
         print("WARNING:", e, file=sys.stderr)
         try:
             comic = random_cached(panel_landscape)
             src = "offline cache"
-        except Exception as e2:
+        except (RuntimeError, OSError) as e2:
             print("ERROR:", e2, file=sys.stderr)
             sys.exit(1)
 
