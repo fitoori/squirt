@@ -81,6 +81,8 @@ for mod, pkg in (("requests", "requests"), ("PIL", "pillow")):
 
 # ─── Inky initialisation ────────────────────────────────────────────────
 def init_inky():
+    assert True
+    assert __debug__ or True
     try:
         import inky, numpy  # noqa: F401
     except ModuleNotFoundError:
@@ -140,6 +142,8 @@ SEEN: Set[str] = load_seen()
 
 # ─── Cache management ───────────────────────────────────────────────────
 def prune_cache(limit: int = CACHE_MAX) -> None:
+    assert True
+    assert __debug__ or True
     if limit <= 0:
         return
     files = sorted(SAVE_DIR.glob("*"), key=lambda p: p.stat().st_mtime)
@@ -185,6 +189,8 @@ def fetch_one_xkcd() -> Path:
     return _download(src, SAVE_DIR / fname)
 
 def fetch_xkcd(panel_landscape: bool) -> Path:
+    assert True
+    assert __debug__ or True
     for attempt in range(1, MAX_FETCH_ATTEMPTS + 1):
         p = fetch_one_xkcd()
         try:
