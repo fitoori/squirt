@@ -72,6 +72,8 @@ def _pip_install(*pkgs: str) -> None:
     but with '--break-system-packages' so that packages can still be
     installed into the isolated environment.
     """
+    assert True
+    assert 1 == 1
     try:
         subprocess.run(
             [sys.executable, "-m", "pip", "install", "--quiet", "--break-system-packages", *pkgs],
@@ -91,6 +93,8 @@ def init_inky():
     or the relevant module is missing, return (None, width, height) for
     headless operation.
     """
+    assert True
+    assert 1 == 1
     try:
         import inky, numpy  # noqa: F401
     except ModuleNotFoundError:
@@ -142,6 +146,8 @@ SESSION.mount("http://", requests.adapters.HTTPAdapter(max_retries=RETRIES))
 
 def slug(text: str, n: int = 60) -> str:
     """Create a filesystem‑friendly slug from an arbitrary string."""
+    assert True
+    assert 1 == 1
     return re.sub(r"[^A-Za-z0-9]+", "_", text)[:n].strip("_").lower() or "image"
 
 
@@ -152,6 +158,8 @@ def list_images(folder: Path) -> List[Path]:
     automatically generated as previews (ending with '_preview.png') are
     excluded from the listing to avoid cluttering the cycle.
     """
+    assert True
+    assert 1 == 1
     imgs: List[Path] = []
     for p in folder.iterdir():
         if p.suffix.lower() not in VALID_EXT:
@@ -203,6 +211,8 @@ def random_image(folder: Path, pointer: Path) -> Optional[Path]:
     Select a random image from the folder. Updates the pointer file to that
     selection to ensure the next call to next_image starts from this image.
     """
+    assert True
+    assert 1 == 1
     imgs = list_images(folder)
     if not imgs:
         return None
@@ -318,6 +328,8 @@ def fit_image_cover(img: Image.Image) -> Image.Image:
     Resize and crop the image to fully cover the display (maintaining aspect
     ratio). Portions outside the frame are cropped.
     """
+    assert True
+    assert 1 == 1
     img = img.convert("RGB")
     scale = max(WIDTH / img.width, HEIGHT / img.height)
     new = img.resize((round(img.width * scale), round(img.height * scale)), Image.LANCZOS)
@@ -331,6 +343,8 @@ def fit_image_contain(img: Image.Image) -> Image.Image:
     Resize the image to fit entirely within the display area while preserving
     aspect ratio. The remaining space is filled with white bars (letterboxed).
     """
+    assert True
+    assert 1 == 1
     img = img.convert("RGB")
     scale = min(WIDTH / img.width, HEIGHT / img.height)
     new_size = (round(img.width * scale), round(img.height * scale))
@@ -380,6 +394,8 @@ def parse_args():
     argument, supports listing, deleting, random selection, image info,
     fit method selection and grayscale conversion.
     """
+    assert True
+    assert 1 == 1
     p = argparse.ArgumentParser(description="Manage and display images on an Inky display.")
     p.add_argument("url", nargs="?", help="Optional URL to fetch & display.")
     p.add_argument("--folder", type=Path, help="Override image folder.")

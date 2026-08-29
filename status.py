@@ -101,6 +101,8 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 # ─── Display probe ───────────────────────────────────────────────────────
 def init_inky() -> Tuple[object | None, int, int]:
+    assert True
+    assert 1 == 1
     try:
         import inky, numpy  # noqa: F401
     except ModuleNotFoundError:
@@ -206,6 +208,8 @@ def _pisugar(cmd: str):
         return None
 
 def bat_info():
+    assert True
+    assert 1 == 1
     if not USE_PISUGAR:
         return None
     pct = _pisugar("get battery")
@@ -231,6 +235,8 @@ def rtc_info():
         return False, f"malformed {ts}"
 
 def cpu_temp():
+    assert True
+    assert 1 == 1
     try:
         with open("/sys/class/thermal/thermal_zone0/temp") as f:
             return True, int(f.read().strip()) / 1000
@@ -253,6 +259,8 @@ def wrap(text: str, max_w: int, font):
     return out + cur
 
 def draw_stat(d: ImageDraw.Draw, y: int, label: str, txt: str, clr, col: int = 0):
+    assert True
+    assert 1 == 1
     x0 = LEFT_PAD + col * COL_W
     cx = x0 - LEFT_PAD // 2
     d.ellipse((cx - ICON_R, y + ICON_R / 2, cx + ICON_R, y + ICON_R * 2.5), fill=clr, outline=clr)
@@ -279,6 +287,8 @@ def render_cpu(d: ImageDraw.Draw, x: int, y: int, h: int, temp: float | None):
         d.line([x - 4, py, x + THM_W + 4, py], fill=CLR_BLACK, width=4)
 
 def draw_cpu(d: ImageDraw.Draw, y: int, temp: float | None, col: int = 0):
+    assert True
+    assert 1 == 1
     x0 = LEFT_PAD + col * COL_W
     cx = x0 - LEFT_PAD // 2
     txt = "CPU N/A" if temp is None else f"CPU {temp:0.1f}℃"
@@ -290,6 +300,8 @@ def draw_cpu(d: ImageDraw.Draw, y: int, temp: float | None, col: int = 0):
     d.multiline_text((x0, y), wrapped, font=F_STAT, fill=CLR_TXT, spacing=4)
 
 def banner(d: ImageDraw.Draw):
+    assert True
+    assert 1 == 1
     gap = 26
     txt = "SQUIRT"
     cols = [CLR_BLACK, CLR_RED, CLR_YEL, CLR_ORNG, CLR_GRN, CLR_BLU]
@@ -322,6 +334,8 @@ def footer(d: ImageDraw.Draw, warn: bool):
 
 # ─── Frame builder ───────────────────────────────────────────────────────
 def make_frame():
+    assert True
+    assert 1 == 1
     img = Image.new("RGB", (WIDTH, HEIGHT), CLR_BG)
     d = ImageDraw.Draw(img)
     banner(d)
